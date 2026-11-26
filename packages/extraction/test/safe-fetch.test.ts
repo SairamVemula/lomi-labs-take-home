@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { createSafeFetch, isBlockedAddress } from "../src/safe-fetch.js";
+import { SsrfBlockedError, createSafeFetch, isBlockedAddress } from "../src/safe-fetch.js";
 
 describe("isBlockedAddress", () => {
   it.each(["127.0.0.1", "10.1.2.3", "172.16.0.1", "192.168.1.1", "169.254.169.254", "100.64.0.1", "0.0.0.0", "224.0.0.1", "::1", "::", "fd00::1", "fe80::1", "::ffff:127.0.0.1"])(
@@ -20,6 +20,11 @@ describe("createSafeFetch", () => {
     await expect(createSafeFetch({ allowPrivateHosts: false })("https://[::1]/x")).rejects.toThrow(/blocked/);
   });
   it("rejects hostnames resolving to blocked addresses", async () => {
-    await expect(createSafeFetch({ allowPrivateHosts: false })("https://localhost/x")).rejects.toThrow();
+    await expect(createSafeFetch({ allowPrivateHosts: false })("https://localhost/x")).rejects.toSatisfy(
+      (e: unknown) => {
+        const c = (e as { cause?: unknown }).cause;
+        return e instanceof SsrfBlockedError || c instanceof SsrfBlockedError || /blocked/.test(String((c as Error)?.message ?? (e as Error).message));
+      },
+    );
   });
 });

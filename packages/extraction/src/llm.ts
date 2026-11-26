@@ -1,5 +1,5 @@
 import OpenAI, { APIConnectionError, APIConnectionTimeoutError, APIError } from "openai";
-import { createSafeFetch } from "./safe-fetch.js";
+import { SsrfBlockedError, createSafeFetch } from "./safe-fetch.js";
 
 export type LlmRequest = { system: string; user: string; jsonSchema: object; schemaName: string };
 
@@ -28,6 +28,9 @@ export type ClientOptions = {
 
 function classify(e: unknown): LlmError {
   if (e instanceof LlmError) return e;
+  for (let c: unknown = e, i = 0; c && i < 8; i++, c = (c as { cause?: unknown }).cause) {
+    if (c instanceof SsrfBlockedError) return new LlmError("permanent", c.reason);
+  }
   if (e instanceof APIConnectionTimeoutError || e instanceof APIConnectionError) {
     return new LlmError("transient", e.message);
   }
@@ -42,7 +45,6 @@ function classify(e: unknown): LlmError {
 async function complete(
   opts: ClientOptions,
   req: LlmRequest,
-  extra: { max_tokens?: number } = {},
 ): Promise<{ parsed: unknown; raw: unknown }> {
   const sdk = new OpenAI({
     baseURL: opts.baseUrl,
@@ -55,8 +57,6 @@ async function complete(
   try {
     raw = await sdk.chat.completions.create({
       model: opts.model,
-      temperature: 0,
-      ...extra,
       messages: [
         { role: "system", content: req.system },
         { role: "user", content: req.user },
@@ -96,6 +96,5 @@ export async function verifyProvider(opts: ClientOptions): Promise<void> {
         additionalProperties: false,
       },
     },
-    { max_tokens: 20 },
   );
 }

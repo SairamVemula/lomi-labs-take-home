@@ -48,7 +48,8 @@ describe("createOpenAiCompatibleClient", () => {
     expect((out.raw as { id: string }).id).toBe("c1");
     expect(bodies[0]!.response_format.type).toBe("json_schema");
     expect(bodies[0]!.response_format.json_schema.strict).toBe(true);
-    expect(bodies[0]!.temperature).toBe(0);
+    expect(bodies[0]).not.toHaveProperty("temperature");
+    expect(bodies[0]).not.toHaveProperty("max_tokens");
   });
   it("classifies 503 as transient", async () => {
     status = 503;
@@ -74,11 +75,35 @@ describe("createOpenAiCompatibleClient", () => {
   });
 });
 
+describe("SSRF classification", () => {
+  const strict = (url: string) => createOpenAiCompatibleClient({ baseUrl: url, apiKey: "k", model: "m", allowPrivateHosts: false });
+  it("literal blocked IP is permanent with reason", async () => {
+    const e = await strict(baseUrl.replace("/v1", "/v1")).completeJson(req).catch((x) => x);
+    expect(e).toBeInstanceOf(LlmError);
+    expect(e.kind).toBe("permanent");
+    expect(e.message).toMatch(/https required|blocked/);
+    const e2 = await strict("https://127.0.0.1:8443/v1").completeJson(req).catch((x) => x);
+    expect(e2).toMatchObject({ kind: "permanent" });
+    expect(e2.message).toContain("blocked");
+  });
+  it("http is permanent with https required", async () => {
+    const e = await strict("http://example.com/v1").completeJson(req).catch((x) => x);
+    expect(e).toMatchObject({ kind: "permanent" });
+    expect(e.message).toContain("https required");
+  });
+  it("hostname resolving to loopback is permanent blocked", async () => {
+    const e = await strict("https://localhost:8443/v1").completeJson(req).catch((x) => x);
+    expect(e).toMatchObject({ kind: "permanent" });
+    expect(e.message).toContain("blocked");
+  });
+});
+
 describe("verifyProvider", () => {
   it("resolves on success with small max_tokens", async () => {
     content = '{"ok":true}';
     await expect(verifyProvider({ baseUrl, apiKey: "k", model: "m", allowPrivateHosts: true })).resolves.toBeUndefined();
-    expect(bodies[0]!.max_tokens).toBeLessThanOrEqual(50);
+    expect(bodies[0]).not.toHaveProperty("max_tokens");
+    expect(bodies[0]).not.toHaveProperty("temperature");
   });
   it("throws LlmError on failure", async () => {
     status = 401;

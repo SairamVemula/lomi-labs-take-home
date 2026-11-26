@@ -45,6 +45,13 @@ export function isBlockedAddress(ip: string): boolean {
   return blocked.check(bare, "ipv6");
 }
 
+export class SsrfBlockedError extends Error {
+  constructor(public reason: string) {
+    super(reason);
+    this.name = "SsrfBlockedError";
+  }
+}
+
 type LookupCb = (err: Error | null, addresses: unknown, family?: number) => void;
 
 export function createSafeFetch(opts: { allowPrivateHosts: boolean }): typeof fetch {
@@ -57,7 +64,7 @@ export function createSafeFetch(opts: { allowPrivateHosts: boolean }): typeof fe
               if (err) return cb(err, []);
               const list = addrs as { address: string; family: number }[];
               if (list.length === 0 || list.some((a) => isBlockedAddress(a.address))) {
-                return cb(new Error(`blocked address for host ${hostname}`), []);
+                return cb(new SsrfBlockedError(`blocked address for host ${hostname}`), []);
               }
               if (options.all) return cb(null, list);
               return cb(null, list[0]!.address, list[0]!.family);
@@ -70,9 +77,9 @@ export function createSafeFetch(opts: { allowPrivateHosts: boolean }): typeof fe
     const raw = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
     const url = new URL(raw);
     if (!opts.allowPrivateHosts) {
-      if (url.protocol !== "https:") throw new Error("https required");
+      if (url.protocol !== "https:") throw new SsrfBlockedError("https required");
       const host = url.hostname.replace(/^\[|\]$/g, "");
-      if (isIP(host) !== 0 && isBlockedAddress(host)) throw new Error(`blocked address ${host}`);
+      if (isIP(host) !== 0 && isBlockedAddress(host)) throw new SsrfBlockedError(`blocked address ${host}`);
     }
     const res = await undiciFetch(input as never, { ...(init as object), dispatcher: agent, redirect: "error" });
     return res as unknown as Response;
