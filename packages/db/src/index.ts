@@ -3,6 +3,7 @@ export * from "./client.js";
 export * from "./migrate.js";
 export * from "./crypto.js";
 export * from "./repo/users.js";
+export * from "./repo/sessions.js";
 export * from "./repo/documents.js";
 export * from "./repo/runs.js";
 export * from "./repo/values.js";
