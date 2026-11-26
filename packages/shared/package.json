@@ -1,0 +1,31 @@
+{
+  "name": "@lomi/shared",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": { "types": "./dist/index.d.ts", "default": "./dist/index.js" }
+  },
+  "scripts": {
+    "copy-fixtures": "node scripts/copy-fixtures.mjs",
+    "prebuild": "pnpm run copy-fixtures",
+    "build": "tsc -p tsconfig.build.json",
+    "lint": "eslint .",
+    "pretypecheck": "pnpm run copy-fixtures",
+    "typecheck": "tsc --noEmit",
+    "pretest": "pnpm run copy-fixtures",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "zod": "^3.25.0"
+  },
+  "devDependencies": {
+    "@lomi/config": "workspace:*",
+    "@types/node": "^24.0.0",
+    "eslint": "^9.0.0",
+    "typescript": "^5.9.0",
+    "vitest": "^3.2.0"
+  }
+}
