@@ -186,6 +186,10 @@ importers:
         version: 3.2.7(@types/node@24.19.4)(lightningcss@1.33.0)(supports-color@7.2.0)
 
   packages/extraction:
+    dependencies:
+      '@lomi/shared':
+        specifier: workspace:*
+        version: link:../shared
     devDependencies:
       '@lomi/config':
         specifier: workspace:*
