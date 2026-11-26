@@ -1,3 +1,14 @@
+/*
+ * Fixture facts for later tasks (extracted with unpdf, mergePages: true):
+ * invoice-001.pdf vs invoice-001.v2.pdf differ in exactly TWO of the invoice fields
+ * (invoice_number, issue_date, due_date, vendor_name, total_amount):
+ *   due_date      v1: "Due Date: 2025-10-14"     v2: "Due Date: 2025-11-13"
+ *   total_amount  v1: "Total Due: $5,230.29"     v2: "Total Due: $6,126.45"
+ * Unchanged: invoice_number "Invoice Number: INV-2025-0847", issue_date "Issue Date: 2025-09-14",
+ * vendor_name "MERIDIAN OFFICE SUPPLIES LLC".
+ * (v2 also changes Payment Terms Net 30 -> Net 60, chair qty/amount, subtotal, tax, title "INVOICE (REVISED)",
+ * and adds a supersedes note; none of those are expected fields.)
+ */
 import { describe, expect, it } from "vitest";
 import { diffAgainstBaseline, type AssembledValue, type BaselineValue } from "../src/index.js";
 
