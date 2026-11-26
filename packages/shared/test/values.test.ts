@@ -29,6 +29,14 @@ describe("normalizeValue", () => {
     expect(normalizeValue("percent", "4.2%")).toEqual({ ok: true, value: 4.2 });
     expect(normalizeValue("number", "12 months")).toEqual({ ok: true, value: 12 });
     expect(normalizeValue("number", "n/a").ok).toBe(false);
+    expect(normalizeValue("number", "1,200")).toEqual({ ok: true, value: 1200 });
+  });
+  it("rejects non-numeric strings for number/percent", () => {
+    for (const bad of ["31/02/2026", "Q3 2026", "12,5", "about 12"]) {
+      expect(normalizeValue("number", bad).ok).toBe(false);
+    }
+    expect(normalizeValue("percent", "Q3 2026").ok).toBe(false);
+    expect(normalizeValue("number", "4%").ok).toBe(false);
   });
   it("normalizes strings", () => {
     expect(normalizeValue("string", "  Acme  Corp ")).toEqual({ ok: true, value: "Acme Corp" });

@@ -82,11 +82,15 @@ function parseMoney(raw: unknown): FieldValue | null {
   return { amount: amount.toFixed(2), currency };
 }
 
-function parseNumber(raw: unknown): number | null {
+const NUMBER_RE = /^\s*(-?(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?|-?\.\d+)\s*(%|[A-Za-z][A-Za-z .]*)?$/;
+
+function parseNumber(raw: unknown, allowPercent: boolean): number | null {
   if (typeof raw === "number") return Number.isFinite(raw) ? raw : null;
   if (typeof raw !== "string") return null;
-  const m = /-?\d[\d,]*(?:\.\d+)?|-?\.\d+/.exec(raw);
-  return m ? parseAmount(m[0]) : null;
+  const m = NUMBER_RE.exec(raw);
+  if (!m) return null;
+  if (m[2] === "%" && !allowPercent) return null;
+  return parseAmount(m[1]!);
 }
 
 export function normalizeValue(type: FieldType, raw: unknown): NormalizeResult {
@@ -106,7 +110,7 @@ export function normalizeValue(type: FieldType, raw: unknown): NormalizeResult {
     }
     case "percent":
     case "number": {
-      const v = parseNumber(raw);
+      const v = parseNumber(raw, type === "percent");
       return v !== null ? { ok: true, value: v } : { ok: false, reason: `invalid ${type}: ${JSON.stringify(raw)}` };
     }
   }
