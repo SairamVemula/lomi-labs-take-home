@@ -22,6 +22,7 @@
   "dependencies": {
     "@lomi/shared": "workspace:*",
     "@lomi/storage": "workspace:*",
+    "bullmq": "^6.7.10",
     "drizzle-orm": "^0.44.0",
     "postgres": "^3.4.0"
   },

@@ -1,4 +1,5 @@
-import { and, eq, sql } from "drizzle-orm";
+import { and, eq, isNull, sql } from "drizzle-orm";
+import type { DocumentType } from "@lomi/shared";
 import { inTx, type Queryable } from "../client.js";
 import { documents, documentVersions, extractionRuns } from "../schema.js";
 
@@ -37,5 +38,147 @@ export async function createRetryRun(
       .returning({ id: extractionRuns.id });
     await tx.update(documentVersions).set({ activeRunId: run!.id }).where(eq(documentVersions.id, doc.currentVersionId));
     return { runId: run!.id };
+  });
+}
+
+export const DEFAULT_LEASE_MS = 60_000;
+export const MAX_ATTEMPTS = 3;
+
+export type ClaimedRun = {
+  id: string;
+  versionId: string;
+  attempt: number;
+  documentId: string;
+  documentType: DocumentType;
+  userId: string;
+  storageKey: string;
+  parsedText: string | null;
+};
+
+/**
+ * Atomically move a queued run to extracting with a fresh lease.
+ * null = not queued any more (duplicate delivery, already done, or gone): ack and drop.
+ */
+export async function claimRun(db: Queryable, runId: string, leaseMs = DEFAULT_LEASE_MS): Promise<ClaimedRun | null> {
+  const [claimed] = await db
+    .update(extractionRuns)
+    .set({
+      status: "extracting",
+      startedAt: sql`now()`,
+      leaseExpiresAt: sql`now() + make_interval(secs => ${leaseMs / 1000}::double precision)`,
+    })
+    .where(and(eq(extractionRuns.id, runId), eq(extractionRuns.status, "queued")))
+    .returning({ id: extractionRuns.id, versionId: extractionRuns.versionId, attempt: extractionRuns.attempt });
+  if (!claimed) return null;
+  const [ctx] = await db
+    .select({
+      documentId: documents.id,
+      documentType: documents.type,
+      userId: documents.userId,
+      storageKey: documentVersions.storageKey,
+      parsedText: documentVersions.parsedText,
+    })
+    .from(documentVersions)
+    .innerJoin(documents, eq(documents.id, documentVersions.documentId))
+    .where(eq(documentVersions.id, claimed.versionId));
+  if (!ctx) throw new Error(`version ${claimed.versionId} of run ${runId} not found`);
+  return { ...claimed, ...ctx };
+}
+
+/** Extend the lease of a run this worker still holds. */
+export async function heartbeat(db: Queryable, runId: string, leaseMs = DEFAULT_LEASE_MS): Promise<void> {
+  await db
+    .update(extractionRuns)
+    .set({ leaseExpiresAt: sql`now() + make_interval(secs => ${leaseMs / 1000}::double precision)` })
+    .where(and(eq(extractionRuns.id, runId), eq(extractionRuns.status, "extracting")));
+}
+
+/** True when the run's version is still its document's current version. */
+export async function isCurrentVersion(db: Queryable, versionId: string): Promise<boolean> {
+  const [row] = await db
+    .select({ current: documents.currentVersionId })
+    .from(documentVersions)
+    .innerJoin(documents, eq(documents.id, documentVersions.documentId))
+    .where(eq(documentVersions.id, versionId));
+  return row?.current === versionId;
+}
+
+/** Store the version's parsed text once; returns whichever text won (first writer). */
+export async function saveParsedText(db: Queryable, versionId: string, text: string): Promise<string> {
+  await db
+    .update(documentVersions)
+    .set({ parsedText: text })
+    .where(and(eq(documentVersions.id, versionId), isNull(documentVersions.parsedText)));
+  const [row] = await db
+    .select({ parsedText: documentVersions.parsedText })
+    .from(documentVersions)
+    .where(eq(documentVersions.id, versionId));
+  return row?.parsedText ?? text;
+}
+
+/** extracting -> superseded. False when the run was no longer extracting. */
+export async function markSuperseded(db: Queryable, runId: string): Promise<boolean> {
+  const rows = await db
+    .update(extractionRuns)
+    .set({ status: "superseded", finishedAt: sql`now()`, leaseExpiresAt: null })
+    .where(and(eq(extractionRuns.id, runId), eq(extractionRuns.status, "extracting")))
+    .returning({ id: extractionRuns.id });
+  return rows.length > 0;
+}
+
+/**
+ * extracting -> failed, in one transaction with the retry decision. A transient failure queues
+ * attempt+1 (and makes it the version's active run) only while attempt < MAX_ATTEMPTS, the run is
+ * still the version's active run, and the version is still the document's current version.
+ * Returns the queued retry's id (caller enqueues it after commit), or null.
+ */
+export async function markFailed(
+  db: Queryable,
+  runId: string,
+  failure: { kind: "transient" | "permanent"; message: string; prompt?: unknown; raw?: unknown },
+): Promise<string | null> {
+  return inTx(db, async (tx) => {
+    const [ctx] = await tx
+      .select({
+        documentId: documents.id,
+        currentVersionId: documents.currentVersionId,
+        versionId: documentVersions.id,
+        activeRunId: documentVersions.activeRunId,
+      })
+      .from(extractionRuns)
+      .innerJoin(documentVersions, eq(documentVersions.id, extractionRuns.versionId))
+      .innerJoin(documents, eq(documents.id, documentVersions.documentId))
+      .where(eq(extractionRuns.id, runId))
+      .for("update", { of: documents });
+    if (!ctx) return null;
+
+    const [failed] = await tx
+      .update(extractionRuns)
+      .set({
+        status: "failed",
+        errorKind: failure.kind,
+        error: failure.message,
+        finishedAt: sql`now()`,
+        leaseExpiresAt: null,
+        ...(failure.prompt !== undefined ? { prompt: failure.prompt } : {}),
+        ...(failure.raw !== undefined ? { rawResponse: failure.raw } : {}),
+      })
+      .where(and(eq(extractionRuns.id, runId), eq(extractionRuns.status, "extracting")))
+      .returning({ attempt: extractionRuns.attempt });
+    if (!failed) return null;
+
+    const retry =
+      failure.kind === "transient" &&
+      failed.attempt < MAX_ATTEMPTS &&
+      ctx.activeRunId === runId &&
+      ctx.currentVersionId === ctx.versionId;
+    if (!retry) return null;
+
+    const [next] = await tx
+      .insert(extractionRuns)
+      .values({ versionId: ctx.versionId, attempt: failed.attempt + 1, status: "queued" })
+      .returning({ id: extractionRuns.id });
+    await tx.update(documentVersions).set({ activeRunId: next!.id }).where(eq(documentVersions.id, ctx.versionId));
+    return next!.id;
   });
 }
