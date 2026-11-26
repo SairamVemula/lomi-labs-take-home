@@ -1,0 +1,12 @@
+node_modules/
+dist/
+.next/
+.turbo/
+.env
+.env.deploy
+*.jsonl
+assignment/jd.md
+playwright-report/
+test-results/
+.superpowers/
+coverage/
