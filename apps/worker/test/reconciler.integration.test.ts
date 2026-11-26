@@ -2,9 +2,9 @@ import { mkdtemp, rm, utimes } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { eq, sql } from "drizzle-orm";
-import { Queue } from "bullmq";
+import { Queue, Worker } from "bullmq";
 import { GenericContainer } from "testcontainers";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import type { Redis } from "ioredis";
 import {
   QUEUE_NAME,
@@ -20,7 +20,7 @@ import {
 } from "@lomi/db";
 import { LocalFileStorage } from "@lomi/storage";
 import { cleanupIdleUsers, sweepOrphanFiles } from "../src/cleanup.js";
-import { createEnqueue, createRedis } from "../src/queue.js";
+import { createEnqueue, createRedis, createRequeue } from "../src/queue.js";
 import { reconcile } from "../src/reconciler.js";
 import { startTestDb } from "./setup.js";
 
@@ -53,6 +53,7 @@ afterAll(async () => {
 });
 
 const enqueue = () => createEnqueue(queue);
+const requeue = () => createRequeue(queue);
 
 async function newDoc(owner = userId) {
   const i = ++n;
@@ -107,12 +108,37 @@ describe("reconcile", () => {
   it("is idempotent while jobs exist (jobId dedupe)", async () => {
     await reset();
     const a = await newDoc();
-    await reconcile({ db, enqueue: enqueue() });
+    await reconcile({ db, enqueue: enqueue(), requeue: requeue() });
     const before = await queue.getJobCounts();
     await reconcile({ db, enqueue: enqueue() });
     await reconcile({ db, enqueue: enqueue() });
     expect(await queue.getJobCounts()).toEqual(before);
     expect(await queue.getJob(a.runId)).toBeDefined();
+  });
+
+  it("re-adds a queued run whose job already failed in Redis, leaves waiting jobs alone", async () => {
+    await reset();
+    const a = await newDoc();
+    await enqueue()(a.runId);
+    const worker = new Worker(
+      QUEUE_NAME,
+      async () => {
+        throw new Error("db briefly down");
+      },
+      { connection: redis },
+    );
+    await vi.waitFor(async () => expect(await (await queue.getJob(a.runId))?.getState()).toBe("failed"), { timeout: 10_000 });
+    await worker.close();
+    // plain enqueue is a silent no-op against the finished job
+    await enqueue()(a.runId);
+    expect(await (await queue.getJob(a.runId))?.getState()).toBe("failed");
+
+    const res = await reconcile({ db, enqueue: enqueue(), requeue: requeue() });
+    expect(res.requeued).toEqual([a.runId]);
+    expect(await (await queue.getJob(a.runId))?.getState()).toBe("waiting");
+    // a waiting job is not removed/replaced
+    await reconcile({ db, enqueue: enqueue(), requeue: requeue() });
+    expect(await (await queue.getJob(a.runId))?.getState()).toBe("waiting");
   });
 
   it("fails an expired extracting run and enqueues the next attempt (no job in Redis)", async () => {

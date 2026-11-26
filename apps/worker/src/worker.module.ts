@@ -15,7 +15,7 @@ import { loadConfig, type WorkerConfig } from "./config.js";
 import { createLlmFor } from "./llm-for-user.js";
 import { processRun, type ProcessRunDeps } from "./process-run.js";
 import { reconcile } from "./reconciler.js";
-import { createEnqueue, createExtractionQueue, createExtractionWorker, createRedis } from "./queue.js";
+import { createEnqueue, createRequeue, createExtractionQueue, createExtractionWorker, createRedis } from "./queue.js";
 
 export const CONFIG = Symbol("CONFIG");
 export const DATABASE = Symbol("DATABASE");
@@ -104,6 +104,7 @@ export class ExtractionWorkerService implements OnApplicationBootstrap, OnApplic
         const r = await reconcile({
           db: this.database.db,
           enqueue,
+          requeue: createRequeue(this.queue!),
           now: () => new Date(),
           log: (m) => this.logger.warn(m),
         });

@@ -4,6 +4,8 @@ import { extractionRuns, markFailed, type Db } from "@lomi/db";
 export type ReconcileDeps = {
   db: Db;
   enqueue: (runId: string) => Promise<void>;
+  /** Used for runs still `queued` in Postgres; should also clear a finished job with the same id. Defaults to `enqueue`. */
+  requeue?: (runId: string) => Promise<void>;
   /** Only for JS-side timestamps; lease expiry is decided with the database clock. */
   now?: () => Date;
   log?: (message: string) => void;
@@ -26,9 +28,9 @@ export async function reconcile(deps: ReconcileDeps): Promise<{ requeued: string
   const requeued: string[] = [];
   const expired: string[] = [];
 
-  const safeEnqueue = async (runId: string): Promise<boolean> => {
+  const safeEnqueue = async (runId: string, add = enqueue): Promise<boolean> => {
     try {
-      await enqueue(runId);
+      await add(runId);
       return true;
     } catch (err) {
       log(`reconcile: enqueue ${runId} failed: ${msg(err)}`);
@@ -43,7 +45,7 @@ export async function reconcile(deps: ReconcileDeps): Promise<{ requeued: string
     log(`reconcile: listing queued runs failed: ${msg(err)}`);
   }
   for (const { id } of queued) {
-    if (await safeEnqueue(id)) requeued.push(id);
+    if (await safeEnqueue(id, deps.requeue ?? enqueue)) requeued.push(id);
   }
 
   let stale: { id: string }[] = [];

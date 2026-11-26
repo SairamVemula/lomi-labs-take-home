@@ -26,3 +26,20 @@ export function createExtractionWorker(
     concurrency,
   });
 }
+
+/**
+ * Like createEnqueue, but first drops a finished (completed/failed) job with the same id: BullMQ
+ * `add` is a silent no-op for an existing jobId in any state, so a run still `queued` in Postgres
+ * whose job already finished (e.g. claimRun hit a DB error) would otherwise never be redelivered.
+ * Waiting/active/delayed jobs are left alone.
+ */
+export function createRequeue(queue: Queue): (runId: string) => Promise<void> {
+  return async (runId) => {
+    const job = await queue.getJob(runId);
+    if (job) {
+      const state = await job.getState();
+      if (state === "completed" || state === "failed") await job.remove();
+    }
+    await enqueueRun(queue, runId);
+  };
+}
