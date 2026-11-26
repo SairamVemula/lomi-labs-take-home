@@ -1,12 +1,13 @@
 import { and, desc, eq, ne, sql } from "drizzle-orm";
 import {
-  documents,
   documentVersions,
   extractedValues,
   extractionRuns,
   inTx,
   latestReviews,
+  lockDocumentOfRun,
   type Queryable,
+  type Tx,
 } from "@lomi/db";
 import type { AssembledValue, BaselineValue, CarryDecision } from "@lomi/extraction";
 import type { FieldValue } from "@lomi/shared";
@@ -75,88 +76,101 @@ export type FinalizeArgs = {
  * Guarded by run.status = 'extracting' AND version.active_run_id = run.id (and the version has no
  * values yet). Returns false, writing no values, when the guard fails.
  */
+class GuardLost extends Error {}
+
 export async function finalizeRun(db: Queryable, args: FinalizeArgs): Promise<boolean> {
-  return inTx(db, async (tx) => {
-    // Lock the document first: same lock order as addVersion / insertReview / markFailed.
-    const [ctx] = await tx
-      .select({
-        status: extractionRuns.status,
-        versionId: extractionRuns.versionId,
-        activeRunId: documentVersions.activeRunId,
-      })
-      .from(extractionRuns)
-      .innerJoin(documentVersions, eq(documentVersions.id, extractionRuns.versionId))
-      .innerJoin(documents, eq(documents.id, documentVersions.documentId))
-      .where(eq(extractionRuns.id, args.runId))
-      .for("update", { of: documents });
-    if (!ctx || ctx.status !== "extracting" || ctx.activeRunId !== args.runId) return false;
+  try {
+    return await inTx(db, (tx) => finalizeInTx(tx, args));
+  } catch (e) {
+    if (e instanceof GuardLost) return false; // rolled back: nothing written
+    throw e;
+  }
+}
 
-    const [existing] = await tx
-      .select({ runId: extractedValues.runId })
-      .from(extractedValues)
-      .where(eq(extractedValues.versionId, ctx.versionId))
-      .limit(1);
-    if (existing) {
-      // A stray extra run for an already-extracted version: point the version back at the run
-      // that produced its values, so the document keeps showing that run's outcome.
-      await tx
-        .update(documentVersions)
-        .set({ activeRunId: existing.runId })
-        .where(eq(documentVersions.id, ctx.versionId));
-      return false;
-    }
+async function finalizeInTx(tx: Tx, args: FinalizeArgs): Promise<boolean> {
+  // Lock the document first (same lock order as addVersion / insertReview / markFailed), then
+  // read run state in a separate statement so it reflects anything committed while we waited.
+  if (!(await lockDocumentOfRun(tx, args.runId))) return false;
+  const [ctx] = await tx
+    .select({
+      status: extractionRuns.status,
+      versionId: extractionRuns.versionId,
+      activeRunId: documentVersions.activeRunId,
+    })
+    .from(extractionRuns)
+    .innerJoin(documentVersions, eq(documentVersions.id, extractionRuns.versionId))
+    .where(eq(extractionRuns.id, args.runId));
+  if (!ctx || ctx.status !== "extracting" || ctx.activeRunId !== args.runId) return false;
 
-    const decisionByField = new Map(args.decisions.map((d) => [d.fieldName, d]));
-    const newIds = new Map<string, string>();
-    if (args.values.length > 0) {
-      const inserted = await tx
-        .insert(extractedValues)
-        .values(
-          args.values.map((v) => {
-            const d = decisionByField.get(v.fieldName);
-            return {
-              versionId: ctx.versionId,
-              runId: args.runId,
-              fieldName: v.fieldName,
-              fieldType: v.fieldType,
-              value: v.value,
-              evidence: v.evidence,
-              evidenceStart: v.evidenceStart,
-              evidenceEnd: v.evidenceEnd,
-              gapReason: v.gapReason,
-              changeStatus: d?.changeStatus ?? "new",
-              previousValueId: d?.previousValueId ?? null,
-            };
-          }),
-        )
-        .onConflictDoNothing({ target: [extractedValues.versionId, extractedValues.fieldName] })
-        .returning({ id: extractedValues.id, fieldName: extractedValues.fieldName });
-      for (const r of inserted) newIds.set(r.fieldName, r.id);
-    }
-
-    // Carried reviews point at the NEW value ids and copy the baseline value's latest review.
-    for (const d of args.decisions) {
-      const valueId = newIds.get(d.fieldName);
-      if (!d.carryReviewId || !valueId) continue;
-      await tx.execute(sql`
-        INSERT INTO reviews (value_id, action, corrected_value, note, origin, carried_from_review_id)
-        SELECT ${valueId}::uuid, action, corrected_value, note, 'carried_over', id
-        FROM reviews WHERE id = ${d.carryReviewId}::uuid
-      `);
-    }
-
+  const [existing] = await tx
+    .select({ runId: extractedValues.runId })
+    .from(extractedValues)
+    .where(eq(extractedValues.versionId, ctx.versionId))
+    .limit(1);
+  if (existing) {
+    // A stray extra run for an already-extracted version: point the version back at the run
+    // that produced its values, so the document keeps showing that run's outcome.
+    // Only while this run is still the active one, so a newer active run is never hidden.
     await tx
-      .update(extractionRuns)
-      .set({
-        status: "extracted",
-        finishedAt: sql`now()`,
-        leaseExpiresAt: null,
-        error: null,
-        errorKind: null,
-        prompt: args.prompt,
-        rawResponse: args.raw,
-      })
-      .where(eq(extractionRuns.id, args.runId));
-    return true;
-  });
+      .update(documentVersions)
+      .set({ activeRunId: existing.runId })
+      .where(and(eq(documentVersions.id, ctx.versionId), eq(documentVersions.activeRunId, args.runId)));
+    return false;
+  }
+
+  const decisionByField = new Map(args.decisions.map((d) => [d.fieldName, d]));
+  const newIds = new Map<string, string>();
+  if (args.values.length > 0) {
+    const inserted = await tx
+      .insert(extractedValues)
+      .values(
+        args.values.map((v) => {
+          const d = decisionByField.get(v.fieldName);
+          return {
+            versionId: ctx.versionId,
+            runId: args.runId,
+            fieldName: v.fieldName,
+            fieldType: v.fieldType,
+            value: v.value,
+            evidence: v.evidence,
+            evidenceStart: v.evidenceStart,
+            evidenceEnd: v.evidenceEnd,
+            gapReason: v.gapReason,
+            changeStatus: d?.changeStatus ?? "new",
+            previousValueId: d?.previousValueId ?? null,
+          };
+        }),
+      )
+      .onConflictDoNothing({ target: [extractedValues.versionId, extractedValues.fieldName] })
+      .returning({ id: extractedValues.id, fieldName: extractedValues.fieldName });
+    for (const r of inserted) newIds.set(r.fieldName, r.id);
+  }
+
+  // Carried reviews point at the NEW value ids and copy the baseline value's latest review.
+  for (const d of args.decisions) {
+    const valueId = newIds.get(d.fieldName);
+    if (!d.carryReviewId || !valueId) continue;
+    await tx.execute(sql`
+      INSERT INTO reviews (value_id, action, corrected_value, note, origin, carried_from_review_id)
+      SELECT ${valueId}::uuid, action, corrected_value, note, 'carried_over', id
+      FROM reviews WHERE id = ${d.carryReviewId}::uuid
+    `);
+  }
+
+  const done = await tx
+    .update(extractionRuns)
+    .set({
+      status: "extracted",
+      finishedAt: sql`now()`,
+      leaseExpiresAt: null,
+      error: null,
+      errorKind: null,
+      prompt: args.prompt,
+      rawResponse: args.raw,
+    })
+    .where(and(eq(extractionRuns.id, args.runId), eq(extractionRuns.status, "extracting")))
+    .returning({ id: extractionRuns.id });
+  // Belt and braces: never overwrite a run someone else already moved on (e.g. failed by the reconciler).
+  if (done.length === 0) throw new GuardLost();
+  return true;
 }

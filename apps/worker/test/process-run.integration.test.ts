@@ -1,11 +1,13 @@
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { and, eq } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import {
   addVersion,
+  claimRun,
   createDocumentWithVersion,
+  markFailed,
   documentVersions,
   encryptKey,
   ensureLocalUser,
@@ -19,7 +21,14 @@ import {
   users,
   type Db,
 } from "@lomi/db";
-import { LlmError, type ClientOptions, type LlmClient } from "@lomi/extraction";
+import {
+  LlmError,
+  assembleValues,
+  diffAgainstBaseline,
+  extractPdfText,
+  type ClientOptions,
+  type LlmClient,
+} from "@lomi/extraction";
 import { FakeLlmClient } from "@lomi/extraction/testing";
 import { LocalFileStorage } from "@lomi/storage";
 import { finalizeRun } from "../src/finalize.js";
@@ -77,6 +86,13 @@ function deps(llm: LlmClient, over: Partial<ProcessRunDeps> = {}): ProcessRunDep
   };
 }
 
+/** Values + decisions as processRun would compute them for invoice v1 (no baseline). */
+async function assembled() {
+  const text = await extractPdfText(new Uint8Array(await readFile(join(fixtures, "invoice-001.pdf"))));
+  const values = assembleValues("invoice", text, V1_OUTPUT);
+  return { values, decisions: diffAgainstBaseline(values, null) };
+}
+
 const run = async (id: string) => (await db.select().from(extractionRuns).where(eq(extractionRuns.id, id)))[0]!;
 const valuesOf = (versionId: string) => db.select().from(extractedValues).where(eq(extractedValues.versionId, versionId));
 const detail = (documentId: string, versionNumber?: number) =>
@@ -132,7 +148,45 @@ describe("processRun", () => {
     expect((await detail(doc.documentId))!.status).toBe("extracted");
   });
 
-  it("supersede before LLM: an old version's run stops without calling the model", async () => {
+  it("finalize after the reconciler failed the run (lease lost) is refused", async () => {
+    const doc = await newInvoice();
+    expect(await claimRun(db, doc.runId)).not.toBeNull();
+    await db
+      .update(extractionRuns)
+      .set({ leaseExpiresAt: sql`now() - interval '1 second'` })
+      .where(eq(extractionRuns.id, doc.runId));
+    const next = await markFailed(db, doc.runId, { kind: "transient", message: "worker lost lease" });
+    expect(next).not.toBeNull();
+
+    expect(await finalizeRun(db, { runId: doc.runId, ...(await assembled()), prompt: {}, raw: {} })).toBe(false);
+    expect(await valuesOf(doc.versionId)).toHaveLength(0);
+    expect((await run(doc.runId)).status).toBe("failed");
+    const [ver] = await db.select().from(documentVersions).where(eq(documentVersions.id, doc.versionId));
+    expect(ver!.activeRunId).toBe(next);
+    expect(await run(next!)).toMatchObject({ status: "queued", attempt: 2 });
+  });
+
+  it("finalize waiting on the document lock re-reads run state after the reconciler commits", async () => {
+    const doc = await newInvoice();
+    expect(await claimRun(db, doc.runId)).not.toBeNull();
+    const args = { runId: doc.runId, ...(await assembled()), prompt: {}, raw: {} };
+    let finalizing!: Promise<boolean>;
+    let next: string | null = null;
+    await db.transaction(async (tx) => {
+      // The "reconciler" fails the run and holds the document lock until commit.
+      next = await markFailed(tx, doc.runId, { kind: "transient", message: "worker lost lease" });
+      finalizing = finalizeRun(db, args); // other connection: blocks on the document lock
+      await new Promise((r) => setTimeout(r, 300));
+    });
+    expect(await finalizing).toBe(false);
+    expect(await valuesOf(doc.versionId)).toHaveLength(0);
+    expect((await run(doc.runId)).status).toBe("failed");
+    const [ver] = await db.select().from(documentVersions).where(eq(documentVersions.id, doc.versionId));
+    expect(ver!.activeRunId).toBe(next);
+    expect(await run(next!)).toMatchObject({ status: "queued", attempt: 2 });
+  });
+
+  it("supersede before LLM:an old version's run stops without calling the model", async () => {
     const doc = await newInvoice();
     await addVersion(db, { documentId: doc.documentId, userId, file: await stored("invoice-001.v2.pdf") });
     const llm = new FakeLlmClient(() => V1_OUTPUT);

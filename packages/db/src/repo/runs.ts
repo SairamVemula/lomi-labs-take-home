@@ -1,6 +1,6 @@
 import { and, eq, isNull, sql } from "drizzle-orm";
 import type { DocumentType } from "@lomi/shared";
-import { inTx, type Queryable } from "../client.js";
+import { inTx, type Queryable, type Tx } from "../client.js";
 import { documents, documentVersions, extractionRuns } from "../schema.js";
 
 /**
@@ -116,6 +116,25 @@ export async function saveParsedText(db: Queryable, versionId: string, text: str
   return row?.parsedText ?? text;
 }
 
+/**
+ * Lock the document that owns a run, in a statement of its own. Every run/version state read that
+ * a decision depends on must come from a LATER statement: at READ COMMITTED a statement's snapshot
+ * predates its own lock wait, so reading run rows in the locking statement can see stale state.
+ * Returns false when the run does not exist.
+ */
+export async function lockDocumentOfRun(tx: Tx, runId: string): Promise<boolean> {
+  const rows = await tx.execute(sql`
+    SELECT d.id FROM documents d
+    WHERE d.id = (
+      SELECT v.document_id FROM extraction_runs r
+      JOIN document_versions v ON v.id = r.version_id
+      WHERE r.id = ${runId}::uuid
+    )
+    FOR UPDATE
+  `);
+  return rows.length > 0;
+}
+
 /** extracting -> superseded. False when the run was no longer extracting. */
 export async function markSuperseded(db: Queryable, runId: string): Promise<boolean> {
   const rows = await db
@@ -138,6 +157,8 @@ export async function markFailed(
   failure: { kind: "transient" | "permanent"; message: string; prompt?: unknown; raw?: unknown },
 ): Promise<string | null> {
   return inTx(db, async (tx) => {
+    if (!(await lockDocumentOfRun(tx, runId))) return null;
+    // Fresh statement after the lock: sees whatever a concurrent finalize/markFailed committed.
     const [ctx] = await tx
       .select({
         documentId: documents.id,
@@ -148,8 +169,7 @@ export async function markFailed(
       .from(extractionRuns)
       .innerJoin(documentVersions, eq(documentVersions.id, extractionRuns.versionId))
       .innerJoin(documents, eq(documents.id, documentVersions.documentId))
-      .where(eq(extractionRuns.id, runId))
-      .for("update", { of: documents });
+      .where(eq(extractionRuns.id, runId));
     if (!ctx) return null;
 
     const [failed] = await tx
