@@ -131,9 +131,17 @@ describe("documents", () => {
 
   it("listDocuments is scoped to the user; storage keys are listed", async () => {
     expect(await listDocuments(db, userB)).toEqual([]);
+    const failed = await createDocumentWithVersion(db, { userId: userA, type: "invoice", title: "F", file: file("fail") });
+    await db
+      .update(extractionRuns)
+      .set({ status: "failed", error: "boom", errorKind: "permanent" })
+      .where(eq(extractionRuns.id, failed.runId));
     const a = await listDocuments(db, userA);
     expect(a.length).toBeGreaterThan(3);
-    expect(a[0]).toMatchObject({ currentVersion: 1, status: "queued", progress: { total: 0, pending: 0 } });
+    expect(a[0]).toMatchObject({ currentVersion: 1, status: "queued", progress: { total: 0, pending: 0 }, latestError: null });
+    const failedDoc = a.find((d) => d.id === failed.documentId);
+    expect(failedDoc?.latestError).toEqual({ kind: "permanent", message: "boom" });
+    expect(a.filter((d) => d.status !== "failed").every((d) => d.latestError === null)).toBe(true);
     const keys = await listReferencedStorageKeys(db);
     expect(keys.has(file("one").storageKey)).toBe(true);
   });

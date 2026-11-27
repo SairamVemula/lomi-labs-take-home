@@ -49,11 +49,17 @@ function RetryButton({ id }: { id: string }) {
   );
 }
 
+function FailureReason({ doc }: { doc: DocumentSummary }) {
+  if (!doc.latestError) return null;
+  return <p className="basis-full text-caption text-failed">{doc.latestError.message}</p>;
+}
+
 function StatusCell({ doc }: { doc: DocumentSummary }) {
   return (
     <div className="flex flex-wrap items-center gap-2">
       <StatusBadge status={doc.status} />
       {doc.status === "failed" && <RetryButton id={doc.id} />}
+      {doc.status === "failed" && <FailureReason doc={doc} />}
     </div>
   );
 }
@@ -107,7 +113,14 @@ function DocumentCards({ docs }: { docs: DocumentSummary[] }) {
           <span className="text-label text-ink-muted">
             {TYPE_LABEL[doc.type]} · v{doc.currentVersion}
           </span>
-          {doc.status === "failed" ? <RetryButton id={doc.id} /> : progressCell(doc)}
+          {doc.status === "failed" ? (
+            <>
+              <RetryButton id={doc.id} />
+              <FailureReason doc={doc} />
+            </>
+          ) : (
+            progressCell(doc)
+          )}
         </li>
       ))}
     </ul>

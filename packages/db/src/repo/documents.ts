@@ -75,7 +75,12 @@ export async function addVersion(
   });
 }
 
-type RunSummary = { status: DocumentStatus; error: string | null; attempt: number };
+type RunSummary = {
+  status: DocumentStatus;
+  error: string | null;
+  errorKind: "transient" | "permanent" | null;
+  attempt: number;
+};
 
 /** Active run of each version (the worker keeps active_run_id pointing at the newest attempt). */
 async function activeRuns(db: Queryable, versionIds: string[]): Promise<Map<string, RunSummary>> {
@@ -86,12 +91,13 @@ async function activeRuns(db: Queryable, versionIds: string[]): Promise<Map<stri
       versionId: documentVersions.id,
       status: extractionRuns.status,
       error: extractionRuns.error,
+      errorKind: extractionRuns.errorKind,
       attempt: extractionRuns.attempt,
     })
     .from(documentVersions)
     .innerJoin(extractionRuns, eq(extractionRuns.id, documentVersions.activeRunId))
     .where(inArray(documentVersions.id, versionIds));
-  for (const r of rows) out.set(r.versionId, { status: r.status, error: r.error, attempt: r.attempt });
+  for (const r of rows) out.set(r.versionId, { status: r.status, error: r.error, errorKind: r.errorKind, attempt: r.attempt });
   return out;
 }
 
@@ -199,14 +205,19 @@ export async function listDocuments(db: Queryable, userId: string): Promise<Docu
     .orderBy(asc(documents.createdAt), asc(documents.id));
   const versionIds = rows.map((r) => r.versionId);
   const [runs, progress] = await Promise.all([activeRuns(db, versionIds), progressByVersion(db, versionIds)]);
-  return rows.map((r) => ({
-    id: r.id,
-    title: r.title,
-    type: r.type,
-    status: runs.get(r.versionId)?.status ?? "queued",
-    currentVersion: r.versionNumber,
-    progress: progress.get(r.versionId) ?? { ...EMPTY_PROGRESS },
-  }));
+  return rows.map((r) => {
+    const run = runs.get(r.versionId);
+    return {
+      id: r.id,
+      title: r.title,
+      type: r.type,
+      status: run?.status ?? "queued",
+      currentVersion: r.versionNumber,
+      progress: progress.get(r.versionId) ?? { ...EMPTY_PROGRESS },
+      latestError:
+        run?.status === "failed" ? { kind: run.errorKind, message: run.error ?? "Extraction failed" } : null,
+    };
+  });
 }
 
 export async function getVersionFile(

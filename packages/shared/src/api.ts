@@ -60,6 +60,7 @@ export const DocumentSummary = z.object({
   status: DocumentStatus,
   currentVersion: z.number().int(),
   progress: Progress,
+  latestError: z.object({ kind: z.enum(["transient", "permanent"]).nullable(), message: z.string() }).nullable(),
 });
 export type DocumentSummary = z.infer<typeof DocumentSummary>;
 

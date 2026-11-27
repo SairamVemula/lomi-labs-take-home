@@ -12,6 +12,7 @@ const doc = (status: DocumentSummary["status"], id: string = status): DocumentSu
   status,
   currentVersion: 1,
   progress: { pending: 0, approved: 0, corrected: 0, carried_over: 0, total: 0 },
+  latestError: null,
 });
 
 describe("busyRefetchInterval", () => {
