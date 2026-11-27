@@ -192,7 +192,7 @@ Known limit: a quote that is reworded but means the same counts as changed. That
 | Unit (Vitest) | Evidence validation, folding, carry-over, value assembly, prompt, LLM client, SSRF-safe fetch, PDF parsing, storage keys, crypto, config guards, web helpers | `pnpm test` |
 | Integration (Vitest + Testcontainers: real Postgres and Redis; needs Docker) | Upload/review/version/retry through the API; auth in byok and local modes; worker claim, heartbeat, supersede, finalize guard, transient retry; reconciler (re-enqueue, expired leases); seed idempotence; progress buckets; storage contract against local and S3 | `pnpm test:integration` |
 | E2E (Playwright, against the compose stack with a fake LLM, no network or key) | Review all 5 invoice values, upload v2, expect 2 pending, 3 carried over, previous values shown | see below |
-| Chaos (`scripts/chaos.sh`, against a live stack) | Worker killed mid-extraction; Redis `FLUSHALL` + full restart | see below |
+| Chaos (`bash scripts/chaos.sh`, against a live stack) | Worker killed mid-extraction; Redis `FLUSHALL` + full restart | see below |
 
 E2E:
 
@@ -209,14 +209,14 @@ Chaos (stack already up):
 ```sh
 # leg (b): wipe Redis, restart everything; asserts nothing stuck and Postgres row counts unchanged
 docker compose up -d
-scripts/chaos.sh redis
+bash scripts/chaos.sh redis
 
 # leg (a): needs a SLOW LLM so a run stays `extracting` long enough to kill the worker
 export COMPOSE_PATH_SEPARATOR=: COMPOSE_FILE=compose.yml:compose.e2e.yml
 FAKE_LLM_DELAY_MS=20000 docker compose up -d --build
-scripts/chaos.sh worker
+bash scripts/chaos.sh worker
 
-scripts/chaos.sh          # both legs
+bash scripts/chaos.sh          # both legs
 ```
 
 The `COMPOSE_FILE` export keeps the worker restart on the e2e config (otherwise it comes back with no LLM). On Windows, the default `COMPOSE_FILE` separator is `;`, so the explicit `COMPOSE_PATH_SEPARATOR=:` in the export matters: run the script from Git Bash with both variables exported as shown. Tunables are listed at the top of the script.
@@ -241,7 +241,7 @@ Single VPS at `lomi.sairam.cc`. GitHub Actions -> GHCR -> SSH.
 
 - `deploy.yml` runs after CI succeeds on a push to main (or by manual dispatch): builds `lomi-api`, `lomi-worker`, `lomi-web` and pushes them to `ghcr.io` tagged with the commit SHA and `latest`; copies `compose.yml`, `compose.prod.yml`, `Caddyfile` and a generated `.env` to `~/lomi` on the VPS; `docker compose -f compose.yml -f compose.prod.yml pull && up -d`; then checks `https://lomi.sairam.cc/api/health`.
 - Prod overlay: `AUTH_MODE=byok`, no secret defaults (compose fails if any is unset), Caddy is the only service publishing ports (80/443, automatic TLS), `TRUST_PROXY_HOPS=2` (Caddy -> Next -> api). The api is never published: its login throttle trusts `X-Forwarded-For`, which is only safe when every hop is ours.
-- **Setup:** `scripts/setup-deploy.sh` is an interactive wizard for the deploy key, the DNS A record and `gh secret set`.
+- **Setup:** `bash scripts/setup-deploy.sh` is an interactive wizard for the deploy key, the DNS A record and `gh secret set`.
 - **Required secrets:** `VPS_HOST`, `VPS_USER`, `VPS_SSH_KEY`, `SESSION_SECRET`, `KEY_ENCRYPTION_KEY` (64 hex chars), `POSTGRES_PASSWORD`. Optional (written to `.env` only when set): `S3_ENDPOINT`, `S3_REGION`, `S3_BUCKET`, `S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY`, `S3_FORCE_PATH_STYLE`. The VPS address is never committed.
 - **Post-deploy throttle check (manual):** send more than 10 `POST /api/auth/login` requests within a minute, each with a different spoofed `X-Forwarded-For` header. You should still get `429`, because with two trusted hops the client IP is taken from what Caddy appended, not from the spoofed value.
 
