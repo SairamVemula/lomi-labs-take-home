@@ -64,13 +64,14 @@ services:
       dockerfile: apps/api/Dockerfile
     image: lomi-api
     restart: unless-stopped
+    stop_grace_period: 15s
     environment:
       <<: *app-env
       TRUST_PROXY_HOPS: ${TRUST_PROXY_HOPS:-1}
     volumes:
       - files:/data/files
     healthcheck:
-      test: ["CMD", "node", "-e", "fetch('http://localhost:3001/health').then(r=>process.exit(r.ok?0:1),()=>process.exit(1))"]
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3001/health').then(r=>process.exit(r.ok?0:1),()=>process.exit(1))"]
       interval: 5s
       timeout: 3s
       retries: 20
@@ -85,6 +86,8 @@ services:
       dockerfile: apps/worker/Dockerfile
     image: lomi-worker
     restart: unless-stopped
+    # The worker drains in-flight jobs for up to 8s on SIGTERM.
+    stop_grace_period: 15s
     environment: *app-env
     volumes:
       - files:/data/files

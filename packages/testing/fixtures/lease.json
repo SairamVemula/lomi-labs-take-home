@@ -1,0 +1,7 @@
+{
+  "tenant_name": { "value": "Dana Okafor", "evidence": "Dana Okafor (\"Tenant\")", "gap_reason": null },
+  "monthly_rent": { "value": { "amount": "2350.00", "currency": "USD" }, "evidence": "monthly rent of $2,350.00", "gap_reason": null },
+  "security_deposit": { "value": { "amount": "3525.00", "currency": "USD" }, "evidence": "the sum of $3,525.00 as a security deposit", "gap_reason": null },
+  "lease_start": { "value": "2025-03-01", "evidence": "commencing on March 1, 2025", "gap_reason": null },
+  "term_months": { "value": 24, "evidence": "twenty-four (24)", "gap_reason": null }
+}

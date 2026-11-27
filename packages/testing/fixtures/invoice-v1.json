@@ -1,0 +1,7 @@
+{
+  "invoice_number": { "value": "INV-2025-0847", "evidence": "Invoice Number: INV-2025-0847", "gap_reason": null },
+  "issue_date": { "value": "2025-09-14", "evidence": "Issue Date: 2025-09-14", "gap_reason": null },
+  "due_date": { "value": "2025-10-14", "evidence": "Due Date: 2025-10-14", "gap_reason": null },
+  "vendor_name": { "value": "MERIDIAN OFFICE SUPPLIES LLC", "evidence": "MERIDIAN OFFICE SUPPLIES LLC", "gap_reason": null },
+  "total_amount": { "value": { "amount": "5230.29", "currency": "USD" }, "evidence": "Total Due: $5,230.29", "gap_reason": null }
+}
