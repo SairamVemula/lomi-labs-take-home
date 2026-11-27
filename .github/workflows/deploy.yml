@@ -1,0 +1,131 @@
+name: Deploy
+
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: deploy
+  cancel-in-progress: false
+
+env:
+  REGISTRY: ghcr.io
+  OWNER: sairamvemula
+  DOMAIN: lomi.sairam.cc
+  # The commit CI validated (workflow_run) or the dispatched one.
+  SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
+
+jobs:
+  images:
+    if: github.event_name == 'workflow_dispatch' || (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - { name: lomi-api, dockerfile: apps/api/Dockerfile }
+          - { name: lomi-worker, dockerfile: apps/worker/Dockerfile }
+          - { name: lomi-web, dockerfile: apps/web/Dockerfile }
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.SHA }}
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ${{ matrix.dockerfile }}
+          push: true
+          tags: |
+            ghcr.io/${{ env.OWNER }}/${{ matrix.name }}:${{ env.SHA }}
+            ghcr.io/${{ env.OWNER }}/${{ matrix.name }}:latest
+          labels: |
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.revision=${{ env.SHA }}
+          build-args: |
+            API_INTERNAL_URL=http://api:3001
+          cache-from: type=gha,scope=${{ matrix.name }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.name }}
+
+  deploy:
+    needs: images
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: read
+    env:
+      VPS_HOST: ${{ secrets.VPS_HOST }}
+      VPS_USER: ${{ secrets.VPS_USER }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.SHA }}
+
+      - name: Prepare SSH and .env
+        env:
+          VPS_SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
+          SESSION_SECRET: ${{ secrets.SESSION_SECRET }}
+          KEY_ENCRYPTION_KEY: ${{ secrets.KEY_ENCRYPTION_KEY }}
+          POSTGRES_PASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
+          S3_ENDPOINT: ${{ secrets.S3_ENDPOINT }}
+          S3_REGION: ${{ secrets.S3_REGION }}
+          S3_BUCKET: ${{ secrets.S3_BUCKET }}
+          S3_ACCESS_KEY_ID: ${{ secrets.S3_ACCESS_KEY_ID }}
+          S3_SECRET_ACCESS_KEY: ${{ secrets.S3_SECRET_ACCESS_KEY }}
+          S3_FORCE_PATH_STYLE: ${{ secrets.S3_FORCE_PATH_STYLE }}
+        run: |
+          set -euo pipefail
+          umask 077
+          mkdir -p ~/.ssh
+          printf '%s\n' "$VPS_SSH_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+
+          {
+            printf 'SESSION_SECRET=%s\n' "$SESSION_SECRET"
+            printf 'KEY_ENCRYPTION_KEY=%s\n' "$KEY_ENCRYPTION_KEY"
+            printf 'POSTGRES_PASSWORD=%s\n' "$POSTGRES_PASSWORD"
+            printf 'IMAGE_TAG=%s\n' "$SHA"
+            # Optional S3: only written when set, so the VPS keeps the local `files` volume otherwise.
+            for k in S3_ENDPOINT S3_REGION S3_BUCKET S3_ACCESS_KEY_ID S3_SECRET_ACCESS_KEY S3_FORCE_PATH_STYLE; do
+              v="${!k:-}"
+              [ -n "$v" ] && printf '%s=%s\n' "$k" "$v"
+            done
+          } > "$RUNNER_TEMP/lomi.env"
+
+      - name: Copy files to the VPS
+        run: |
+          set -euo pipefail
+          SSH_OPTS="-i $HOME/.ssh/deploy_key -o StrictHostKeyChecking=accept-new -o IdentitiesOnly=yes"
+          ssh $SSH_OPTS "$VPS_USER@$VPS_HOST" 'mkdir -p ~/lomi'
+          scp $SSH_OPTS compose.yml compose.prod.yml Caddyfile "$VPS_USER@$VPS_HOST:lomi/"
+          scp $SSH_OPTS "$RUNNER_TEMP/lomi.env" "$VPS_USER@$VPS_HOST:lomi/.env"
+          ssh $SSH_OPTS "$VPS_USER@$VPS_HOST" 'chmod 600 ~/lomi/.env'
+
+      - name: Pull and restart
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GHCR_USER: ${{ github.actor }}
+        run: |
+          set -euo pipefail
+          SSH_OPTS="-i $HOME/.ssh/deploy_key -o StrictHostKeyChecking=accept-new -o IdentitiesOnly=yes"
+          # Token goes over stdin, never on a command line.
+          printf '%s' "$GHCR_TOKEN" | ssh $SSH_OPTS "$VPS_USER@$VPS_HOST" "docker login ghcr.io -u '$GHCR_USER' --password-stdin"
+          ssh $SSH_OPTS "$VPS_USER@$VPS_HOST" 'cd ~/lomi && docker compose -f compose.yml -f compose.prod.yml pull && docker compose -f compose.yml -f compose.prod.yml up -d --remove-orphans && docker image prune -f'
+
+      - name: Health check
+        run: curl -fsS --retry 10 --retry-delay 6 --retry-all-errors "https://$DOMAIN/api/health"
+
+      - name: Remove key
+        if: always()
+        run: rm -f ~/.ssh/deploy_key "$RUNNER_TEMP/lomi.env"

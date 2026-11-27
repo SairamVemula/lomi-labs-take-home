@@ -1,0 +1,13 @@
+# TLS is automatic (Let's Encrypt) once the A record for lomi.sairam.cc points at this host.
+lomi.sairam.cc {
+	encode zstd gzip
+
+	header {
+		Strict-Transport-Security "max-age=31536000"
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		-Server
+	}
+
+	reverse_proxy web:3000
+}

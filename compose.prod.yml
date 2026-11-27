@@ -1,0 +1,62 @@
+# Production overlay: docker compose -f compose.yml -f compose.prod.yml up -d
+# Every secret comes from ~/lomi/.env on the VPS (written by the deploy workflow); there are no defaults.
+# Only caddy publishes ports (80/443). The api must never be reachable from outside: its login throttle
+# trusts X-Forwarded-For, which is only trustworthy when every hop is ours (caddy -> web rewrite -> api).
+x-prod-env: &prod-env
+  AUTH_MODE: byok
+  PUBLIC_ORIGIN: https://lomi.sairam.cc
+  DATABASE_URL: postgresql://postgres:${POSTGRES_PASSWORD:?set in .env}@postgres:5432/postgres
+  SESSION_SECRET: ${SESSION_SECRET:?set in .env}
+  KEY_ENCRYPTION_KEY: ${KEY_ENCRYPTION_KEY:?set in .env}
+
+services:
+  postgres:
+    restart: unless-stopped
+    environment:
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set in .env}
+
+  redis:
+    restart: unless-stopped
+
+  # AUTH_MODE=byok: boot.ts migrates and skips seeding.
+  migrate:
+    build: !reset null
+    image: ghcr.io/sairamvemula/lomi-api:${IMAGE_TAG:-latest}
+    environment: *prod-env
+
+  api:
+    build: !reset null
+    image: ghcr.io/sairamvemula/lomi-api:${IMAGE_TAG:-latest}
+    restart: unless-stopped
+    environment:
+      <<: *prod-env
+      TRUST_PROXY_HOPS: "2"
+
+  worker:
+    build: !reset null
+    image: ghcr.io/sairamvemula/lomi-worker:${IMAGE_TAG:-latest}
+    restart: unless-stopped
+    environment: *prod-env
+
+  web:
+    build: !reset null
+    image: ghcr.io/sairamvemula/lomi-web:${IMAGE_TAG:-latest}
+    restart: unless-stopped
+    ports: !reset []
+
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - web
+
+volumes:
+  caddy_data:
+  caddy_config:
