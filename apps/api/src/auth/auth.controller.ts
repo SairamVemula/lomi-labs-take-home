@@ -17,7 +17,7 @@ export const PRESETS = [
   { name: "Anthropic", baseUrl: "https://api.anthropic.com/v1/" },
   { name: "OpenRouter", baseUrl: "https://openrouter.ai/api/v1" },
   { name: "Groq", baseUrl: "https://api.groq.com/openai/v1" },
-  { name: "Ollama", baseUrl: "http://localhost:11434/v1", localOnly: true },
+  { name: "Ollama", baseUrl: "http://host.docker.internal:11434/v1", localOnly: true },
 ] as const;
 
 export function parseLlmBody(body: unknown): LoginRequest {
