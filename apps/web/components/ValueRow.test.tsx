@@ -51,6 +51,7 @@ describe("ValueRow", () => {
       effectiveValue: "2025-11-13",
       changeStatus: "changed",
       previous: {
+        versionNumber: 1,
         value: "2025-10-14",
         latestReview: review({ action: "correct", correctedValue: "2025-10-15", note: "by phone" }),
       },
@@ -62,6 +63,17 @@ describe("ValueRow", () => {
     expect(box).toHaveTextContent("2025-10-14");
     expect(box).toHaveTextContent("Corrected to 2025-10-15");
     expect(box).toHaveTextContent("by phone");
+  });
+
+  it("labels the baseline by its real version number after a supersede (v3 vs v1)", () => {
+    const v = value({
+      changeStatus: "changed",
+      previous: { versionNumber: 1, value: "2025-10-14", latestReview: null },
+    });
+    render(<ValueRow {...base} version={3} value={v} />);
+    expect(screen.getByText("Now · version 3")).toBeInTheDocument();
+    expect(screen.getByText("Previously · version 1")).toBeInTheDocument();
+    expect(screen.queryByText("Previously · version 2")).toBeNull();
   });
 
   it("a gap shows the reason in amber and the struck model quote; Confirm gap / Enter value", () => {

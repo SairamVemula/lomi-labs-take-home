@@ -84,6 +84,7 @@ describe("progress & reviews", () => {
       changeStatus: "changed",
     });
     expect(val.previous).toMatchObject({
+      versionNumber: 1,
       value: "v",
       latestReview: { action: "correct", correctedValue: "Fixed", note: "typo", origin: "manual" },
     });

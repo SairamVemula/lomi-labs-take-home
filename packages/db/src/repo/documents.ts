@@ -132,6 +132,7 @@ export async function getDocumentDetail(
     : [];
   const reviewMap = await latestReviews(db, [...valueRows.map((v) => v.id), ...previousRows.map((v) => v.id)]);
   const previousById = new Map(previousRows.map((v) => [v.id, v]));
+  const versionNumberById = new Map(versions.map((v) => [v.id, v.versionNumber]));
 
   const reviewView = (r: ReviewRow | undefined) =>
     r
@@ -163,7 +164,13 @@ export async function getDocumentDetail(
         changeStatus: v.changeStatus,
         effectiveValue: effective(v.value, review),
         latestReview: reviewView(review),
-        previous: prev ? { value: prev.value ?? null, latestReview: reviewView(reviewMap.get(prev.id)) } : null,
+        previous: prev
+          ? {
+              versionNumber: versionNumberById.get(prev.versionId) ?? 0,
+              value: prev.value ?? null,
+              latestReview: reviewView(reviewMap.get(prev.id)),
+            }
+          : null,
       };
     })
     .sort((a, b) => (order.get(a.fieldName) ?? 1e9) - (order.get(b.fieldName) ?? 1e9) || a.fieldName.localeCompare(b.fieldName));

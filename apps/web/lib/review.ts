@@ -48,9 +48,14 @@ export function subline(values: ValueView[], version: number): string | null {
   const carried = values.filter(isCarried).length;
   if (changed === 0 && carried === 0) return null;
   const s = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
+  // The baseline is the newest earlier version with extracted values, not necessarily version - 1.
+  const baselines = new Set(
+    values.filter((v) => v.changeStatus === "changed" || isCarried(v)).flatMap((v) => (v.previous ? [v.previous.versionNumber] : [])),
+  );
+  const from = baselines.size === 1 ? ` version ${[...baselines][0]}` : " the previous version";
   return (
     `Version ${version} changed ${s(changed, "value", "values")}. ` +
-    `${s(carried, "review", "reviews")} carried over from version ${version - 1} because their evidence didn’t change.`
+    `${s(carried, "review", "reviews")} carried over from${from} because their evidence didn’t change.`
   );
 }
 

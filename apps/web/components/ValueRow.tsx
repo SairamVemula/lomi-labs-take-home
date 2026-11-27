@@ -53,12 +53,12 @@ function StateBadge({ value, version }: { value: ValueView; version: number }) {
   );
 }
 
-function Previously({ value, version }: { value: ValueView; version: number }) {
+function Previously({ value }: { value: ValueView }) {
   const prev = value.previous!;
   const r = prev.latestReview;
   return (
     <div className="flex flex-1 basis-60 flex-col gap-1 rounded-md border border-dashed border-border bg-surface p-3">
-      <span className="text-caption text-ink-muted">{`Previously · version ${version - 1}`}</span>
+      <span className="text-caption text-ink-muted">{`Previously${prev.versionNumber > 0 ? ` · version ${prev.versionNumber}` : ""}`}</span>
       <div className="text-body font-medium text-ink-muted">{displayText(value.fieldType, prev.value)}</div>
       {r ? (
         <span className={`text-caption font-medium ${r.action === "correct" ? "text-corrected" : "text-approved"}`}>
@@ -138,7 +138,7 @@ export function ValueRow({ value, version, selected, readOnly, onSelect, onHover
           <Value value={value} className="text-title font-semibold text-ink" />
           {value.evidence && <blockquote className={`${MONO_QUOTE} text-ink`}>{value.evidence}</blockquote>}
         </div>
-        <Previously value={value} version={version} />
+        <Previously value={value} />
       </div>
     );
   } else {

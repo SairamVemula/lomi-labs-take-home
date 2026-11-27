@@ -34,17 +34,36 @@ describe("headline / subline", () => {
     expect(headline(0)).toBe("All reviewed");
   });
   it("describes the carry-over only after re-extraction", () => {
+    const p = { versionNumber: 1, value: "x", latestReview: null };
     const vals = [
-      value({ id: "x", changeStatus: "changed" }),
-      value({ id: "y", changeStatus: "changed" }),
-      carried("c1"),
-      carried("c2"),
-      carried("c3"),
+      value({ id: "x", changeStatus: "changed", previous: p }),
+      value({ id: "y", changeStatus: "changed", previous: p }),
+      { ...carried("c1"), previous: p },
+      { ...carried("c2"), previous: p },
+      { ...carried("c3"), previous: p },
     ];
     expect(subline(vals, 2)).toBe(
       "Version 2 changed 2 values. 3 reviews carried over from version 1 because their evidence didn’t change.",
     );
     expect(subline(vals, 1)).toBeNull();
+  });
+  it("names the real baseline version when it is not adjacent (v3 vs v1)", () => {
+    const prev = (n: number) => ({ versionNumber: n, value: "x", latestReview: null });
+    const vals = [
+      value({ id: "x", changeStatus: "changed", previous: prev(1) }),
+      value({ id: "c", changeStatus: "unchanged", latestReview: review({ origin: "carried_over" }), previous: prev(1) }),
+    ];
+    expect(subline(vals, 3)).toBe(
+      "Version 3 changed 1 value. 1 review carried over from version 1 because their evidence didn’t change.",
+    );
+  });
+  it("omits the number when the baselines are mixed", () => {
+    const prev = (n: number) => ({ versionNumber: n, value: "x", latestReview: null });
+    const vals = [
+      value({ id: "x", changeStatus: "changed", previous: prev(1) }),
+      value({ id: "c", changeStatus: "unchanged", latestReview: review({ origin: "carried_over" }), previous: prev(2) }),
+    ];
+    expect(subline(vals, 3)).toContain("carried over from the previous version because");
   });
 });
 

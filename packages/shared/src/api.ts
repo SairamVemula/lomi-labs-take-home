@@ -49,7 +49,14 @@ export const ValueView = z.object({
   changeStatus: ChangeStatus,
   effectiveValue: z.unknown().nullable(),
   latestReview: ReviewView.nullable(),
-  previous: z.object({ value: z.unknown().nullable(), latestReview: ReviewView.nullable() }).nullable(),
+  previous: z
+    .object({
+      /** Version number the previous value belongs to (the baseline version; not always N-1). */
+      versionNumber: z.number().int(),
+      value: z.unknown().nullable(),
+      latestReview: ReviewView.nullable(),
+    })
+    .nullable(),
 });
 export type ValueView = z.infer<typeof ValueView>;
 
