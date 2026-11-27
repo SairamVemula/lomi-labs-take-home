@@ -1,6 +1,10 @@
+import { mkdtemp } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { eq } from "drizzle-orm";
 import request from "supertest";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { LocalFileStorage, type FileStorage } from "@lomi/storage";
 import { decryptKey, documents, sessions, users, type Db } from "@lomi/db";
 import { LlmError, SsrfBlockedError } from "@lomi/extraction";
 import { KEK, createTestApp, type TestApp } from "./app.js";
@@ -151,6 +155,62 @@ describe("AUTH_MODE=byok", () => {
       expect((await request(http).get("/health")).status).toBe(200);
     } finally {
       await limited.close();
+    }
+  });
+
+  it("heals a failed first seeding: the next login with the same key seeds the workspace", async () => {
+    const real = new LocalFileStorage(await mkdtemp(join(tmpdir(), "heal-")));
+    let failures = 1;
+    const flaky: FileStorage = {
+      kind: real.kind,
+      put: async (key, bytes, contentType) => {
+        if (failures-- > 0) throw new Error("storage blip");
+        void contentType;
+        return real.put(key, bytes);
+      },
+      get: (k) => real.get(k),
+      exists: (k) => real.exists(k),
+      delete: (k) => real.delete(k),
+      list: (p) => real.list(p),
+      signedGetUrl: () => real.signedGetUrl(),
+    };
+    const app = await createTestApp(
+      db,
+      { AUTH_MODE: "byok", PUBLIC_ORIGIN: "https://lomi.example.com", LOGIN_RATE_LIMIT: "100" },
+      { storage: flaky },
+    );
+    try {
+      const http = app.app.getHttpServer();
+      const key = { baseUrl: "https://heal.example.com/v1", apiKey: "sk-heal", model: "m" };
+      const first = await request(http).post("/auth/login").send(key);
+      expect(first.status).toBe(500);
+      expect(sid(first)).toBe("");
+      const second = await request(http).post("/auth/login").send(key);
+      expect(second.status).toBe(200);
+      const docs = await request(http).get("/documents").set("Cookie", sid(second));
+      expect(docs.body).toHaveLength(3);
+      expect(app.queueAdd).toHaveBeenCalledTimes(3);
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("throttles per client IP behind two proxies (TRUST_PROXY_HOPS=2)", async () => {
+    const app = await createTestApp(db, {
+      AUTH_MODE: "byok",
+      PUBLIC_ORIGIN: "https://lomi.example.com",
+      TRUST_PROXY_HOPS: "2",
+      LOGIN_RATE_LIMIT: "10",
+    });
+    try {
+      const http = app.app.getHttpServer();
+      const post = (client: string) =>
+        request(http).post("/auth/login").set("X-Forwarded-For", `${client}, 172.18.0.5`).send({});
+      for (let i = 0; i < 10; i++) expect((await post("203.0.113.1")).status).not.toBe(429);
+      expect((await post("203.0.113.1")).status).toBe(429);
+      expect((await post("203.0.113.2")).status).not.toBe(429);
+    } finally {
+      await app.close();
     }
   });
 });

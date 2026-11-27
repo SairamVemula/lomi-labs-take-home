@@ -2,11 +2,13 @@ import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import type { INestApplication } from "@nestjs/common";
+import type { NestExpressApplication } from "@nestjs/platform-express";
 import { Test } from "@nestjs/testing";
-import { LocalFileStorage } from "@lomi/storage";
+import { LocalFileStorage, type FileStorage } from "@lomi/storage";
 import type { Db } from "@lomi/db";
 import { vi, type Mock } from "vitest";
 import { AppModule } from "../src/app.module.js";
+import { configureApp } from "../src/configure-app.js";
 import { loadConfig } from "../src/config.js";
 import { CONFIG, DATABASE, PROVIDER_VERIFIER, QUEUE, STORAGE } from "../src/tokens.js";
 
@@ -24,7 +26,7 @@ export type TestApp = {
 export async function createTestApp(
   db: Db,
   env: Record<string, string>,
-  opts: { queueAdd?: () => Promise<unknown> } = {},
+  opts: { queueAdd?: () => Promise<unknown>; storage?: FileStorage } = {},
 ): Promise<TestApp> {
   const config = loadConfig({
     DATABASE_URL: "postgres://unused/unused",
@@ -36,7 +38,7 @@ export async function createTestApp(
   });
   const verifier = vi.fn<(o: unknown) => Promise<void>>(async () => undefined);
   const queueAdd = vi.fn<(...args: unknown[]) => Promise<unknown>>(opts.queueAdd ?? (async () => ({})));
-  const storage = new LocalFileStorage(await mkdtemp(join(tmpdir(), "lomi-api-")));
+  const storage = opts.storage ?? new LocalFileStorage(await mkdtemp(join(tmpdir(), "lomi-api-")));
   const mod = await Test.createTestingModule({ imports: [AppModule] })
     .overrideProvider(CONFIG)
     .useValue(config)
@@ -49,7 +51,8 @@ export async function createTestApp(
     .overrideProvider(PROVIDER_VERIFIER)
     .useValue(verifier)
     .compile();
-  const app = mod.createNestApplication();
+  const app = mod.createNestApplication<NestExpressApplication>();
+  configureApp(app, config);
   await app.init();
   return { app, verifier, queueAdd, close: () => app.close() };
 }

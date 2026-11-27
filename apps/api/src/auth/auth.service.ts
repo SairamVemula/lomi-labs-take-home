@@ -51,16 +51,16 @@ export class AuthService {
   async login(body: LoginRequest): Promise<{ token: string; user: User }> {
     await this.verifyProvider(body);
     const { db } = this.database;
-    const { user, created } = await upsertUserByIdentity(db, {
+    const { user } = await upsertUserByIdentity(db, {
       identityHash: identityHash(this.config.sessionSecret!, body.baseUrl, body.apiKey),
       baseUrl: body.baseUrl,
       model: body.model,
       encryptedKey: encryptKey(body.apiKey, this.config.keyEncryptionKey!),
     });
-    if (created) {
-      const runIds = await seedWorkspace(db, this.storage, user.id, this.config.fixturesDir);
-      await this.enqueuer.enqueue(runIds);
-    }
+    // Idempotent (unique user_id+external_id), so seed on every login: a first login whose seeding
+    // failed after the user row committed heals on the next one. Returns [] when already seeded.
+    const runIds = await seedWorkspace(db, this.storage, user.id, this.config.fixturesDir);
+    await this.enqueuer.enqueue(runIds);
     const token = newSessionToken();
     await createSession(db, {
       tokenHash: hashToken(token),
