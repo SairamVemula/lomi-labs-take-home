@@ -4,7 +4,8 @@ import { NestFactory } from "@nestjs/core";
 import { AppModule } from "./app.module.js";
 import type { ApiConfig } from "./config.js";
 import { configureApp } from "./configure-app.js";
-import { CONFIG } from "./tokens.js";
+import { CONFIG, STORAGE } from "./tokens.js";
+import type { FileStorage } from "@lomi/storage";
 
 async function main(): Promise<void> {
   const app = await NestFactory.create<NestExpressApplication>(AppModule);
@@ -12,7 +13,7 @@ async function main(): Promise<void> {
   configureApp(app, config);
   app.enableShutdownHooks(["SIGTERM", "SIGINT"]);
   await app.listen(config.port, "0.0.0.0");
-  console.log(`api listening on :${config.port} (auth ${config.authMode})`);
+  console.log(`api listening on :${config.port} (auth ${config.authMode}, storage: ${app.get<FileStorage>(STORAGE).kind})`);
 }
 
 main().catch((err: unknown) => {
