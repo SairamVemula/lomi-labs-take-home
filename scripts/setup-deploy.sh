@@ -250,9 +250,9 @@ say "This appends $KEY_FILE.pub to ~/.ssh/authorized_keys on $VPS_TARGET."
 say "You authenticate with your own existing key or password."
 if confirm "Install the deploy public key on $VPS_TARGET?"; then
   if command -v ssh-copy-id >/dev/null 2>&1; then
-    ssh-copy-id -i "$KEY_FILE.pub" "$VPS_TARGET"
+    ssh-copy-id -o StrictHostKeyChecking=accept-new -i "$KEY_FILE.pub" "$VPS_TARGET"
   else
-    ssh "$VPS_TARGET" 'umask 077; mkdir -p ~/.ssh && cat >> ~/.ssh/authorized_keys' < "$KEY_FILE.pub"
+    ssh -o StrictHostKeyChecking=accept-new "$VPS_TARGET" 'umask 077; mkdir -p ~/.ssh && cat >> ~/.ssh/authorized_keys' < "$KEY_FILE.pub"
   fi
   say "Testing the dedicated key..."
   ssh -i "$KEY_FILE" -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new "$VPS_TARGET" 'echo key login ok' \
@@ -264,7 +264,7 @@ fi
 
 # ── 5. Docker on the VPS ──────────────────────────────────────────────────
 stage "Docker on the VPS"
-if ssh -i "$KEY_FILE" -o IdentitiesOnly=yes "$VPS_TARGET" 'docker compose version' 2>/dev/null; then
+if ssh -i "$KEY_FILE" -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new "$VPS_TARGET" 'docker compose version' 2>/dev/null; then
   say "Docker and the compose plugin are already installed."
 else
   warn "Docker with the compose plugin was not found on $VPS_TARGET."
@@ -275,11 +275,11 @@ else
   fi
   if confirm "Run that on $VPS_TARGET now?"; then
     if [[ "$VPS_USER_PART" == "root" ]]; then
-      ssh -i "$KEY_FILE" -o IdentitiesOnly=yes "$VPS_TARGET" 'curl -fsSL https://get.docker.com | sh'
+      ssh -i "$KEY_FILE" -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new "$VPS_TARGET" 'curl -fsSL https://get.docker.com | sh'
     else
-      ssh -t -i "$KEY_FILE" -o IdentitiesOnly=yes "$VPS_TARGET" 'curl -fsSL https://get.docker.com | sudo sh && sudo usermod -aG docker "$USER"'
+      ssh -t -i "$KEY_FILE" -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new "$VPS_TARGET" 'curl -fsSL https://get.docker.com | sudo sh && sudo usermod -aG docker "$USER"'
     fi
-    ssh -i "$KEY_FILE" -o IdentitiesOnly=yes "$VPS_TARGET" 'docker compose version' \
+    ssh -i "$KEY_FILE" -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new "$VPS_TARGET" 'docker compose version' \
       || { warn "docker compose still not usable; check the VPS by hand"; exit 1; }
   else
     SKIPPED+=("install Docker + compose plugin on $VPS_TARGET")
