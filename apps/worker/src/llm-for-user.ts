@@ -1,5 +1,5 @@
 import { eq } from "drizzle-orm";
-import { decryptKey, users, type Queryable } from "@lomi/db";
+import { NO_LLM_ERROR, decryptKey, users, type Queryable } from "@lomi/db";
 import { LlmError, createOpenAiCompatibleClient, type ClientOptions, type LlmClient } from "@lomi/extraction";
 import type { AuthMode, LlmEnv } from "./config.js";
 
@@ -40,6 +40,6 @@ export function createLlmFor(o: LlmForOptions): (userId: string) => Promise<LlmC
         allowPrivateHosts,
       });
     }
-    throw new LlmError("permanent", "No LLM configured");
+    throw new LlmError("permanent", NO_LLM_ERROR);
   };
 }

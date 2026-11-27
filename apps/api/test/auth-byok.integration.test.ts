@@ -5,7 +5,7 @@ import { eq } from "drizzle-orm";
 import request from "supertest";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { LocalFileStorage, type FileStorage } from "@lomi/storage";
-import { decryptKey, documents, sessions, users, type Db } from "@lomi/db";
+import { NO_LLM_ERROR, decryptKey, documentVersions, documents, extractionRuns, sessions, users, type Db } from "@lomi/db";
 import { LlmError, SsrfBlockedError } from "@lomi/extraction";
 import { KEK, createTestApp, type TestApp } from "./app.js";
 import { startTestDb } from "./setup.js";
@@ -124,6 +124,32 @@ describe("AUTH_MODE=byok", () => {
     expect((await request(http).get("/documents").set("Cookie", cookie)).status).toBe(401);
     const all = await byokUsers();
     expect(all.filter((u) => u.encryptedKey === null)).toHaveLength(1); // only keyB's user lost its key
+  });
+
+  it("re-login retries runs that failed with 'No LLM configured', but not genuine failures", async () => {
+    const http = t.app.getHttpServer();
+    const keyC = { ...keyA, apiKey: "sk-secret-C" };
+    const login = await request(http).post("/auth/login").send(keyC);
+    const [user] = (await byokUsers()).filter((u) => u.encryptedKey !== null && decryptKey(u.encryptedKey, KEK) === "sk-secret-C");
+    const docs = (await db.select().from(documents)).filter((d) => d.userId === user!.id);
+    expect(docs.length).toBeGreaterThanOrEqual(2);
+    const runs = await Promise.all(
+      docs.map(async (d) => {
+        const [v] = await db.select().from(documentVersions).where(eq(documentVersions.id, d.currentVersionId!));
+        return v!.activeRunId!;
+      }),
+    );
+    await request(http).post("/auth/logout").set("Cookie", sid(login));
+    await db.update(extractionRuns).set({ status: "failed", error: NO_LLM_ERROR, errorKind: "permanent" }).where(eq(extractionRuns.id, runs[0]!));
+    await db.update(extractionRuns).set({ status: "failed", error: "provider exploded", errorKind: "permanent" }).where(eq(extractionRuns.id, runs[1]!));
+    t.queueAdd.mockClear();
+    const again = await request(http).post("/auth/login").send(keyC);
+    expect(again.status).toBe(200);
+    const fresh = await db.select().from(extractionRuns).where(eq(extractionRuns.versionId, docs[0]!.currentVersionId!));
+    expect(fresh.filter((r) => r.status === "queued")).toHaveLength(1);
+    const other = await db.select().from(extractionRuns).where(eq(extractionRuns.versionId, docs[1]!.currentVersionId!));
+    expect(other.filter((r) => r.status === "queued")).toHaveLength(0);
+    expect(t.queueAdd).toHaveBeenCalledTimes(1);
   });
 
   it("expired sessions are rejected and a live one slides its expiry", async () => {

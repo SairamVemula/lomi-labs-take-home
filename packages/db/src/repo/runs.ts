@@ -3,13 +3,17 @@ import type { DocumentType } from "@lomi/shared";
 import { inTx, type Queryable, type Tx } from "../client.js";
 import { documents, documentVersions, extractionRuns } from "../schema.js";
 
+/** Error text of a run that failed because the owner had no LLM configured (worker `llmFor`). */
+export const NO_LLM_ERROR = "No LLM configured";
+
 /**
- * Queue a new attempt for the current version, only when its active run failed.
+ * Queue a new attempt for the current version, only when its active run failed
+ * (and, with `onlyError`, only when it failed with exactly that error).
  * Locks the document row so concurrent retries/uploads serialize.
  */
 export async function createRetryRun(
   db: Queryable,
-  args: { documentId: string; userId: string },
+  args: { documentId: string; userId: string; onlyError?: string },
 ): Promise<{ runId: string } | { error: "NOT_FAILED" | "NOT_FOUND" }> {
   return inTx(db, async (tx) => {
     const [doc] = await tx
@@ -24,9 +28,10 @@ export async function createRetryRun(
       .from(documentVersions)
       .where(eq(documentVersions.id, doc.currentVersionId));
     const [active] = ver?.activeRunId
-      ? await tx.select({ status: extractionRuns.status }).from(extractionRuns).where(eq(extractionRuns.id, ver.activeRunId))
+      ? await tx.select({ status: extractionRuns.status, error: extractionRuns.error }).from(extractionRuns).where(eq(extractionRuns.id, ver.activeRunId))
       : [];
     if (active?.status !== "failed") return { error: "NOT_FAILED" as const };
+    if (args.onlyError !== undefined && active.error !== args.onlyError) return { error: "NOT_FAILED" as const };
 
     const [{ next }] = (await tx
       .select({ next: sql<number>`coalesce(max(${extractionRuns.attempt}), 0) + 1` })

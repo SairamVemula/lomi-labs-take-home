@@ -60,9 +60,14 @@ export async function clearEncryptedKey(db: Queryable, userId: string): Promise<
 
 /**
  * Queue a fresh attempt for every document of the user whose current version's active run
- * has failed. Returns the new run ids (callers enqueue them).
+ * has failed (with `onlyError`: failed with exactly that error). Returns the new run ids
+ * (callers enqueue them).
  */
-export async function retryFailedRunsForUser(db: Queryable, userId: string): Promise<string[]> {
+export async function retryFailedRunsForUser(
+  db: Queryable,
+  userId: string,
+  opts: { onlyError?: string } = {},
+): Promise<string[]> {
   const docs = await db
     .select({ id: documents.id })
     .from(documents)
@@ -70,7 +75,7 @@ export async function retryFailedRunsForUser(db: Queryable, userId: string): Pro
     .orderBy(asc(documents.createdAt), asc(documents.id));
   const runIds: string[] = [];
   for (const d of docs) {
-    const r = await createRetryRun(db, { documentId: d.id, userId });
+    const r = await createRetryRun(db, { documentId: d.id, userId, onlyError: opts.onlyError });
     if ("runId" in r) runIds.push(r.runId);
   }
   return runIds;

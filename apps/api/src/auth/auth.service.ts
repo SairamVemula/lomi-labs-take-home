@@ -5,6 +5,8 @@ import {
   deleteSession,
   encryptKey,
   identityHash,
+  NO_LLM_ERROR,
+  retryFailedRunsForUser,
   saveLlmConfig,
   seedWorkspace,
   upsertUserByIdentity,
@@ -60,7 +62,10 @@ export class AuthService {
     // Idempotent (unique user_id+external_id), so seed on every login: a first login whose seeding
     // failed after the user row committed heals on the next one. Returns [] when already seeded.
     const runIds = await seedWorkspace(db, this.storage, user.id, this.config.fixturesDir);
-    await this.enqueuer.enqueue(runIds);
+    // A logout wiped the key, so runs queued meanwhile failed with "No LLM configured": retry exactly
+    // those (genuine failures stay failed until the user retries them).
+    const retried = await retryFailedRunsForUser(db, user.id, { onlyError: NO_LLM_ERROR });
+    await this.enqueuer.enqueue([...runIds, ...retried]);
     const token = newSessionToken();
     await createSession(db, {
       tokenHash: hashToken(token),
