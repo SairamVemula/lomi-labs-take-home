@@ -48,7 +48,8 @@ async function complete(
 ): Promise<{ parsed: unknown; raw: unknown }> {
   const sdk = new OpenAI({
     baseURL: opts.baseUrl,
-    apiKey: opts.apiKey,
+    // Keyless local servers (LM Studio, Ollama) ignore the key, but the SDK needs a non-empty one.
+    apiKey: opts.apiKey || "not-needed",
     fetch: createSafeFetch({ allowPrivateHosts: opts.allowPrivateHosts }) as never,
     maxRetries: 0,
     timeout: opts.timeoutMs ?? 60000,

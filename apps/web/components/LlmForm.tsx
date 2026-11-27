@@ -17,6 +17,7 @@ export function LlmForm({
   pending,
   onSubmit,
   note,
+  keyOptional = false,
 }: {
   idPrefix: string;
   presets: Preset[];
@@ -26,6 +27,8 @@ export function LlmForm({
   pending: boolean;
   onSubmit: (v: LlmValues) => void;
   note?: string;
+  /** Local mode: keyless servers (LM Studio, Ollama) need no API key. */
+  keyOptional?: boolean;
 }) {
   const [preset, setPreset] = useState(presets[0]?.name ?? CUSTOM);
   const [baseUrl, setBaseUrl] = useState(presets[0]?.baseUrl ?? "");
@@ -82,13 +85,19 @@ export function LlmForm({
         <input
           id={`${idPrefix}-key`}
           type="password"
-          required
+          required={!keyOptional}
           autoComplete="off"
           value={apiKey}
           onChange={(e) => setApiKey(e.target.value)}
           aria-invalid={error ? true : undefined}
+          aria-describedby={keyOptional ? `${idPrefix}-key-hint` : undefined}
           className={`${inputClass} ${error ? "border-failed" : ""}`}
         />
+        {keyOptional && (
+          <span id={`${idPrefix}-key-hint`} className="text-caption text-ink-muted">
+            Optional for local servers such as LM Studio or Ollama.
+          </span>
+        )}
       </div>
       <div className="flex flex-col gap-1.5">
         <label htmlFor={`${idPrefix}-model`} className={label}>

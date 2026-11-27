@@ -6,7 +6,8 @@ import { useRouter } from "next/navigation";
 import { useEffect } from "react";
 import { LlmForm, type LlmValues } from "../../components/LlmForm";
 import { useToast } from "../../components/Toast";
-import { ApiError, apiPut } from "../../lib/api";
+import { apiPut } from "../../lib/api";
+import { providerError } from "../../lib/provider-error";
 import { useAuthConfig } from "../../lib/auth";
 import { linkClass } from "../../lib/focus";
 
@@ -31,13 +32,7 @@ export default function SettingsPage() {
 
   if (!config.data || config.data.mode === "byok") return <p className="p-6 text-ink-muted">Loading…</p>;
 
-  const err = save.error;
-  const error = err
-    ? {
-        title: err instanceof ApiError && err.code === "PROVIDER_REJECTED" ? "The provider rejected this key." : "Could not save.",
-        detail: err.message,
-      }
-    : null;
+  const error = providerError(save.error, "Could not save.");
 
   return (
     <main className="mx-auto flex max-w-[560px] flex-col gap-6 px-4 py-8 md:px-6 md:py-10">
@@ -58,10 +53,11 @@ export default function SettingsPage() {
             idPrefix="settings"
             presets={config.data.presets}
             submitLabel="Save and retry failed documents"
-            pendingLabel="Checking the key…"
+            pendingLabel="Checking the connection…"
             error={error}
             pending={save.isPending}
             onSubmit={(v) => save.mutate(v)}
+            keyOptional
           />
         </div>
       )}

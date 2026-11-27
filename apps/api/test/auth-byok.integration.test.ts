@@ -106,6 +106,18 @@ describe("AUTH_MODE=byok", () => {
     expect(rejected.status).toBe(401);
     expect(rejected.body.code).toBe("PROVIDER_REJECTED");
     expect(setCookies(rejected)).toHaveLength(0);
+
+    t.verifier.mockRejectedValueOnce(new LlmError("transient", "Connection error."));
+    const unreachable = await request(http).post("/auth/login").send(keyA);
+    expect(unreachable.status).toBe(400);
+    expect(unreachable.body.code).toBe("PROVIDER_UNREACHABLE");
+  });
+
+  it("byok login still requires an API key", async () => {
+    const res = await request(t.app.getHttpServer()).post("/auth/login").send({ ...keyA, apiKey: "" });
+    expect(res.status).toBe(400);
+    expect(res.body.code).toBe("API_KEY_REQUIRED");
+    expect(t.verifier).not.toHaveBeenCalledWith(expect.objectContaining({ apiKey: "" }));
   });
 
   it("settings are local-only: PUT /settings/llm is 404", async () => {

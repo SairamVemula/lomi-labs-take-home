@@ -10,16 +10,19 @@ let status = 200;
 let content = '{"a":1}';
 type Body = { response_format: { type: string; json_schema: { strict: boolean } }; temperature: number; max_tokens?: number };
 let bodies: Body[] = [];
+let auths: (string | undefined)[] = [];
 
 beforeEach(async () => {
   status = 200;
   content = '{"a":1}';
   bodies = [];
+  auths = [];
   server = createServer((req, res) => {
     let b = "";
     req.on("data", (c) => (b += c));
     req.on("end", () => {
       bodies.push(JSON.parse(b) as Body);
+      auths.push(req.headers.authorization);
       res.writeHead(status, { "content-type": "application/json" });
       if (status !== 200) return res.end(JSON.stringify({ error: { message: "nope" } }));
       res.end(
@@ -50,6 +53,12 @@ describe("createOpenAiCompatibleClient", () => {
     expect(bodies[0]!.response_format.json_schema.strict).toBe(true);
     expect(bodies[0]).not.toHaveProperty("temperature");
     expect(bodies[0]).not.toHaveProperty("max_tokens");
+  });
+  it("works without an API key (keyless local servers such as LM Studio)", async () => {
+    const c = createOpenAiCompatibleClient({ baseUrl, apiKey: "", model: "m", allowPrivateHosts: true });
+    await expect(c.completeJson(req)).resolves.toMatchObject({ parsed: { a: 1 } });
+    await expect(verifyProvider({ baseUrl, apiKey: "", model: "m", allowPrivateHosts: true })).resolves.toBeUndefined();
+    expect(auths[0]).toMatch(/^Bearer \S+/);
   });
   it("classifies 503 as transient", async () => {
     status = 503;

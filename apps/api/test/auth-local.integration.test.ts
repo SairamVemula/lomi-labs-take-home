@@ -80,8 +80,21 @@ describe("AUTH_MODE=local", () => {
     const before = await request(http).get("/auth/config");
     expect(before.body).toMatchObject({ mode: "local", llmConfigured: false, llmSource: null });
     expect(before.body.presets.map((p: { name: string }) => p.name)).toEqual(
-      expect.arrayContaining(["OpenAI", "Anthropic", "OpenRouter", "Groq", "Ollama"]),
+      expect.arrayContaining(["OpenAI", "Anthropic", "OpenRouter", "Groq", "Ollama", "LM Studio"]),
     );
+    const lmStudio = before.body.presets.find((p: { name: string }) => p.name === "LM Studio");
+    expect(lmStudio.baseUrl).toBe("http://host.docker.internal:1234/v1");
+
+    // A keyless local server that can't be reached is "unreachable", not a rejected key, and the
+    // message points at the Docker localhost pitfall.
+    t.verifier.mockRejectedValueOnce(new LlmError("transient", "Connection error."));
+    const unreachable = await request(http)
+      .put("/settings/llm")
+      .send({ baseUrl: "http://localhost:1234/v1", model: "qwen3-8b" });
+    expect(unreachable.status).toBe(400);
+    expect(unreachable.body.code).toBe("PROVIDER_UNREACHABLE");
+    expect(unreachable.body.message).toContain("host.docker.internal");
+    expect(unreachable.body.message).not.toContain("[redacted]");
 
     const bad = await request(http).put("/settings/llm").send({ baseUrl: "nope" });
     expect(bad.status).toBe(400);
@@ -110,6 +123,20 @@ describe("AUTH_MODE=local", () => {
 
     const [local] = await db.select().from(users).where(eq(users.isLocal, true));
     expect(decryptKey(local!.encryptedKey!, KEK)).toBe(body.apiKey);
+
+    // Keyless local servers (LM Studio, Ollama): saving without an API key works.
+    const keyless = await request(http)
+      .put("/settings/llm")
+      .send({ baseUrl: "http://host.docker.internal:1234/v1", model: "qwen3-8b" });
+    expect(keyless.status).toBe(200);
+    expect(t.verifier).toHaveBeenLastCalledWith({
+      baseUrl: "http://host.docker.internal:1234/v1",
+      apiKey: "",
+      model: "qwen3-8b",
+      allowPrivateHosts: true,
+    });
+    const [after2] = await db.select().from(users).where(eq(users.isLocal, true));
+    expect(decryptKey(after2!.encryptedKey!, KEK)).toBe("");
   });
 
   it("enqueue failures never fail the request", async () => {

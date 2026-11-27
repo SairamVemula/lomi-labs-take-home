@@ -18,6 +18,7 @@ export const PRESETS = [
   { name: "OpenRouter", baseUrl: "https://openrouter.ai/api/v1" },
   { name: "Groq", baseUrl: "https://api.groq.com/openai/v1" },
   { name: "Ollama", baseUrl: "http://host.docker.internal:11434/v1", localOnly: true },
+  { name: "LM Studio", baseUrl: "http://host.docker.internal:1234/v1", localOnly: true },
 ] as const;
 
 export function parseLlmBody(body: unknown): LoginRequest {

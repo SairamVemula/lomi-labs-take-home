@@ -28,6 +28,12 @@ const isBlockedHost = (e: unknown): boolean =>
   e instanceof SsrfBlockedError ||
   (e instanceof LlmError && e.kind === "permanent" && /https required|blocked/i.test(e.message));
 
+/** A connection-level failure (no HTTP status): the endpoint never answered, so no key was judged. */
+const isUnreachable = (e: unknown): boolean => e instanceof LlmError && e.kind === "transient" && e.status === undefined;
+
+const LOCALHOST_HINT =
+  "If the app runs in Docker, localhost is the container itself: use host.docker.internal instead (e.g. http://host.docker.internal:1234/v1 for LM Studio), and make sure the local server is started.";
+
 @Injectable()
 export class AuthService {
   constructor(
@@ -43,14 +49,20 @@ export class AuthService {
     try {
       await this.verifier({ ...body, allowPrivateHosts: this.config.authMode === "local" });
     } catch (e) {
-      const message = (e instanceof Error ? e.message : String(e)).split(body.apiKey).join("[redacted]");
+      const raw = e instanceof Error ? e.message : String(e);
+      const message = body.apiKey ? raw.split(body.apiKey).join("[redacted]") : raw;
       if (isBlockedHost(e)) throw new ApiError(400, "INVALID_BASE_URL", message);
+      if (isUnreachable(e)) {
+        throw new ApiError(400, "PROVIDER_UNREACHABLE", `Could not reach ${body.baseUrl} (${message}). ${LOCALHOST_HINT}`);
+      }
       throw new ApiError(401, "PROVIDER_REJECTED", message);
     }
   }
 
   /** byok login: returns the session token and the user. Seeds the workspace for a new user. */
   async login(body: LoginRequest): Promise<{ token: string; user: User }> {
+    // The key is the user's identity on the public site; keyless endpoints are a local-mode convenience.
+    if (!body.apiKey) throw new ApiError(400, "API_KEY_REQUIRED", "An API key is required to sign in.");
     await this.verifyProvider(body);
     const { db } = this.database;
     const { user } = await upsertUserByIdentity(db, {

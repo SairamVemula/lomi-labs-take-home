@@ -4,7 +4,8 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useRouter } from "next/navigation";
 import { useEffect } from "react";
 import { LlmForm, type LlmValues } from "../../components/LlmForm";
-import { ApiError, apiPost } from "../../lib/api";
+import { apiPost } from "../../lib/api";
+import { providerError } from "../../lib/provider-error";
 import { useAuthConfig } from "../../lib/auth";
 
 export default function LoginPage() {
@@ -36,12 +37,7 @@ export default function LoginPage() {
     return <p className="p-6 text-ink-muted">Loading…</p>;
   }
 
-  const err = login.error;
-  const error = err
-    ? err instanceof ApiError && err.code === "PROVIDER_REJECTED"
-      ? { title: "The provider rejected this key.", detail: err.message }
-      : { title: "Could not sign in.", detail: err.message }
-    : null;
+  const error = providerError(login.error, "Could not sign in.");
 
   return (
     <main className="flex flex-wrap items-start justify-center gap-12 px-4 py-10 md:py-16">

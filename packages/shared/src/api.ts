@@ -14,7 +14,8 @@ export type ReviewRequest = z.infer<typeof ReviewRequest>;
 
 export const LoginRequest = z.object({
   baseUrl: z.string().url(),
-  apiKey: z.string().min(1),
+  // Optional: keyless local servers (LM Studio, Ollama) need none. byok login still requires one (API).
+  apiKey: z.string().default(""),
   model: z.string().min(1),
 });
 export type LoginRequest = z.infer<typeof LoginRequest>;
