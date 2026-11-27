@@ -5,6 +5,7 @@ import {
   HttpException,
   HttpStatus,
   Logger,
+  PayloadTooLargeException,
 } from "@nestjs/common";
 import type { Response } from "express";
 
@@ -33,6 +34,11 @@ export class ApiExceptionFilter implements ExceptionFilter {
 
   catch(exception: unknown, host: ArgumentsHost): void {
     const res = host.switchToHttp().getResponse<Response>();
+    // multer's fileSize limit surfaces as 413; the API contract is a 400 with its own code.
+    if (exception instanceof PayloadTooLargeException) {
+      res.status(400).json({ code: "FILE_TOO_LARGE", message: "File exceeds the 5 MB limit" } satisfies ErrorBody);
+      return;
+    }
     if (exception instanceof HttpException) {
       const status = exception.getStatus();
       const r = exception.getResponse();

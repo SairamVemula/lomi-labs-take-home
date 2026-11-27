@@ -8,6 +8,8 @@ import { AuthService } from "./auth/auth.service.js";
 import type { ApiConfig } from "./config.js";
 import { CoreModule } from "./core.module.js";
 import { DocumentsController } from "./documents/documents.controller.js";
+import { DocumentsService } from "./documents/documents.service.js";
+import { ValuesController } from "./values/values.controller.js";
 import { ApiExceptionFilter } from "./errors.js";
 import { HealthController } from "./health.controller.js";
 import { SettingsController } from "./settings/settings.controller.js";
@@ -23,9 +25,10 @@ import { CONFIG } from "./tokens.js";
       useFactory: (c: ApiConfig) => [{ ttl: 60_000, limit: c.loginRateLimit }],
     }),
   ],
-  controllers: [HealthController, AuthController, SettingsController, DocumentsController],
+  controllers: [HealthController, AuthController, SettingsController, DocumentsController, ValuesController],
   providers: [
     AuthService,
+    DocumentsService,
     // Every route needs a user unless marked @Public(); later controllers inherit this.
     { provide: APP_GUARD, useClass: AuthGuard },
     { provide: APP_FILTER, useClass: ApiExceptionFilter },

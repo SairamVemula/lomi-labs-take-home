@@ -218,6 +218,9 @@ importers:
         specifier: ^7.8.2
         version: 7.8.2
     devDependencies:
+      '@aws-sdk/client-s3':
+        specifier: ^3.700.0
+        version: 3.1177.0
       '@lomi/config':
         specifier: workspace:*
         version: link:../../packages/config
