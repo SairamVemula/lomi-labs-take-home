@@ -12,13 +12,13 @@ function defaultCurrency(v: ValueView): string {
   return cur ? cur.toUpperCase() : "USD";
 }
 
+/** Plain decimal amount, at most 2 decimals, optional thousands commas: no exponent, no silent rounding. */
+const MONEY_RE = /^-?\d{1,3}(,\d{3})*(\.\d{1,2})?$|^-?\d+(\.\d{1,2})?$/;
+
+/** The amount is sent as typed (the server normalizes it); the client only gates what it accepts. */
 function toPayload(type: ValueView["fieldType"], text: string, currency: string): unknown {
   const t = text.trim();
-  if (type === "money") {
-    const cleaned = t.replace(/[,\s]/g, "");
-    return { amount: cleaned !== "" && Number.isFinite(Number(cleaned)) ? Number(cleaned) : t, currency };
-  }
-  return t;
+  return type === "money" ? { amount: t, currency } : t;
 }
 
 function placeholderFor(type: ValueView["fieldType"]): string | undefined {
@@ -59,6 +59,10 @@ export function ReviewForm({ value, onReview }: { value: ValueView; onReview: (b
     e.preventDefault();
     if (text.trim() === "") {
       setError("Enter a value");
+      return;
+    }
+    if (value.fieldType === "money" && !MONEY_RE.test(text.trim())) {
+      setError("Enter an amount like 1234.50 (at most 2 decimals)");
       return;
     }
     const n = note.trim();

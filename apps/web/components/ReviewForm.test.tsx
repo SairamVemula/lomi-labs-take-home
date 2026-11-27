@@ -37,9 +37,28 @@ describe("ReviewForm", () => {
     await waitFor(() =>
       expect(onReview).toHaveBeenCalledWith({
         action: "correct",
-        value: { amount: 6126.45, currency: "EUR" },
+        value: { amount: "6126.45", currency: "EUR" },
         note: "revised",
       }),
+    );
+  });
+
+  it("money rejects exponents and more than 2 decimals inline, and sends the string as typed otherwise", async () => {
+    const onReview = vi.fn().mockResolvedValue(undefined);
+    const money = value({ fieldType: "money", value: { amount: 1, currency: "USD" }, effectiveValue: { amount: 1, currency: "USD" } });
+    render(<ReviewForm value={money} onReview={onReview} />);
+    fireEvent.click(screen.getByRole("button", { name: "Correct" }));
+    const input = screen.getByLabelText("Corrected value");
+    for (const bad of ["1e3", "1234.567", "12,34", "abc", "1.2.3"]) {
+      fireEvent.change(input, { target: { value: bad } });
+      fireEvent.click(screen.getByRole("button", { name: "Save correction" }));
+      expect(screen.getByRole("alert")).toHaveTextContent(/at most 2 decimals/);
+    }
+    expect(onReview).not.toHaveBeenCalled();
+    fireEvent.change(input, { target: { value: " 1,234.5 " } });
+    fireEvent.click(screen.getByRole("button", { name: "Save correction" }));
+    await waitFor(() =>
+      expect(onReview).toHaveBeenCalledWith({ action: "correct", value: { amount: "1,234.5", currency: "USD" } }),
     );
   });
 
