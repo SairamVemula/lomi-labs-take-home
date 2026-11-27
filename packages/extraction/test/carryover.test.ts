@@ -49,6 +49,38 @@ describe("diffAgainstBaseline", () => {
     const r = diffAgainstBaseline([av({ evidence: "Other" })], new Map([["f", bv()]]));
     expect(r[0]!.changeStatus).toBe("changed");
   });
+  describe("cross-text check", () => {
+    const base = () => new Map([["f", bv({ value: "INV-1", evidence: "INV-1" })]]);
+    const reworded = av({ value: "INV-1", evidence: "Invoice Number: INV-1" });
+    it("reworded quote + same value + baseline quote present in new text -> unchanged with carry", () => {
+      const r = diffAgainstBaseline([reworded], base(), {
+        nextText: "Header Invoice Number: INV-1 end",
+        baselineText: "Number INV-1 here",
+      });
+      expect(r[0]).toEqual({ fieldName: "f", changeStatus: "unchanged", previousValueId: "v1", carryReviewId: "r1" });
+    });
+    it("reworded quote + same value + new quote present in baseline text -> unchanged", () => {
+      const r = diffAgainstBaseline([reworded], base(), {
+        nextText: "completely different INV-9",
+        baselineText: "Invoice Number: INV-1 (old)",
+      });
+      expect(r[0]!.changeStatus).toBe("unchanged");
+    });
+    it("same value but baseline quote absent from new text and new quote absent from old text -> changed", () => {
+      const r = diffAgainstBaseline([reworded], base(), { nextText: "nothing relevant", baselineText: "nor here" });
+      expect(r[0]).toMatchObject({ changeStatus: "changed", carryReviewId: null });
+    });
+    it("different value with identical quote stays changed", () => {
+      const r = diffAgainstBaseline([av({ value: "B", evidence: "INV-1" })], base(), {
+        nextText: "INV-1",
+        baselineText: "INV-1",
+      });
+      expect(r[0]!.changeStatus).toBe("changed");
+    });
+    it("without texts a reworded quote is still changed", () => {
+      expect(diffAgainstBaseline([reworded], base())[0]!.changeStatus).toBe("changed");
+    });
+  });
   it("gaps with equal reason unchanged; no review -> null carry", () => {
     const next = av({ value: null, evidence: null, gapReason: "nope" });
     const r = diffAgainstBaseline(

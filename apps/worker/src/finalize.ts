@@ -16,14 +16,16 @@ import type { FieldValue } from "@lomi/shared";
  * Baseline for carry-over: the most recent *other* version of the same document whose active run
  * is `extracted` (by version_number desc), as fieldName -> value + its latest review.
  */
-export async function loadBaseline(db: Queryable, versionId: string): Promise<Map<string, BaselineValue> | null> {
+export type Baseline = { values: Map<string, BaselineValue>; parsedText: string };
+
+export async function loadBaseline(db: Queryable, versionId: string): Promise<Baseline | null> {
   const [me] = await db
     .select({ documentId: documentVersions.documentId })
     .from(documentVersions)
     .where(eq(documentVersions.id, versionId));
   if (!me) return null;
   const [base] = await db
-    .select({ id: documentVersions.id })
+    .select({ id: documentVersions.id, parsedText: documentVersions.parsedText })
     .from(documentVersions)
     .innerJoin(extractionRuns, eq(extractionRuns.id, documentVersions.activeRunId))
     .where(
@@ -60,7 +62,7 @@ export async function loadBaseline(db: Queryable, versionId: string): Promise<Ma
         : null,
     });
   }
-  return out;
+  return { values: out, parsedText: base.parsedText ?? "" };
 }
 
 export type FinalizeArgs = {

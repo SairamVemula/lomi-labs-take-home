@@ -92,7 +92,12 @@ export async function processRun(deps: ProcessRunDeps, runId: string): Promise<P
     if (!isObject(res.parsed)) throw new LlmError("permanent", "model output is not a JSON object");
 
     const values = assembleValues(claimed.documentType, parsedText, res.parsed as Record<string, LlmField | undefined>);
-    const decisions = diffAgainstBaseline(values, await loadBaseline(db, claimed.versionId));
+    const baseline = await loadBaseline(db, claimed.versionId);
+    const decisions = diffAgainstBaseline(
+      values,
+      baseline?.values ?? null,
+      baseline ? { nextText: parsedText, baselineText: baseline.parsedText } : undefined,
+    );
     if (await finalizeRun(db, { runId, values, decisions, prompt, raw })) return "extracted";
     // Guard failed (no longer the active run, version already extracted, or lease lost): nothing written.
     return await supersede();
