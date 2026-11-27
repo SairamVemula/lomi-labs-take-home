@@ -18,6 +18,7 @@ export function LlmForm({
   onSubmit,
   note,
   keyOptional = false,
+  initial,
 }: {
   idPrefix: string;
   presets: Preset[];
@@ -29,11 +30,16 @@ export function LlmForm({
   note?: string;
   /** Local mode: keyless servers (LM Studio, Ollama) need no API key. */
   keyOptional?: boolean;
+  /** The saved config to start from (the key is never sent back, so it always starts empty). */
+  initial?: { baseUrl: string; model: string };
 }) {
-  const [preset, setPreset] = useState(presets[0]?.name ?? CUSTOM);
-  const [baseUrl, setBaseUrl] = useState(presets[0]?.baseUrl ?? "");
+  const startUrl = initial?.baseUrl ?? presets[0]?.baseUrl ?? "";
+  const [preset, setPreset] = useState(
+    initial ? (presets.find((p) => p.baseUrl === initial.baseUrl)?.name ?? CUSTOM) : (presets[0]?.name ?? CUSTOM),
+  );
+  const [baseUrl, setBaseUrl] = useState(startUrl);
   const [apiKey, setApiKey] = useState("");
-  const [model, setModel] = useState("gpt-4.1-mini");
+  const [model, setModel] = useState(initial?.model ?? "gpt-4.1-mini");
 
   function pickPreset(name: string) {
     setPreset(name);
