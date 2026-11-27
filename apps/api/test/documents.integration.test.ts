@@ -253,9 +253,11 @@ describe("reviews and progress", () => {
     expect(badMoney.status).toBe(400);
     expect(badMoney.body.code).toBe("INVALID_VALUE");
     expect(badMoney.body.message).toContain("money");
+    expect(badMoney.body.message.match(/invalid/g)).toHaveLength(1);
     const badDate = await post(date, { action: "correct", value: "31/02/2026" });
     expect(badDate.status).toBe(400);
     expect(badDate.body.message).toContain("date");
+    expect(badDate.body.message.match(/invalid/g)).toHaveLength(1);
     expect((await post(money, { action: "correct" })).body.code).toBe("INVALID_VALUE");
     expect((await post(money, { action: "bogus" })).status).toBe(400);
 

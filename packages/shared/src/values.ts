@@ -96,9 +96,9 @@ function parseNumber(raw: unknown, allowPercent: boolean): number | null {
 export function normalizeValue(type: FieldType, raw: unknown): NormalizeResult {
   switch (type) {
     case "string": {
-      if (typeof raw !== "string" && typeof raw !== "number") return { ok: false, reason: "expected a string" };
+      if (typeof raw !== "string" && typeof raw !== "number") return { ok: false, reason: "invalid string: expected a string" };
       const s = String(raw).trim().replace(/\s+/g, " ");
-      return s ? { ok: true, value: s } : { ok: false, reason: "empty string" };
+      return s ? { ok: true, value: s } : { ok: false, reason: "invalid string: empty string" };
     }
     case "date": {
       const d = typeof raw === "string" ? parseDate(raw) : null;

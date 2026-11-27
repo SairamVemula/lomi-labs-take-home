@@ -25,6 +25,25 @@ describe("normalizeValue", () => {
     expect(normalizeValue("money", "GBP 5.255")).toMatchObject({ ok: true, value: { currency: "GBP" } });
     expect(normalizeValue("money", "abc").ok).toBe(false);
   });
+  it("every rejection reason carries exactly one `invalid <type>:` prefix", () => {
+    const cases: [Parameters<typeof normalizeValue>[0], unknown][] = [
+      ["string", ""],
+      ["string", "   "],
+      ["string", { a: 1 }],
+      ["date", "nope"],
+      ["money", "abc"],
+      ["percent", "x"],
+      ["number", "x"],
+    ];
+    for (const [type, raw] of cases) {
+      const r = normalizeValue(type, raw);
+      expect(r.ok).toBe(false);
+      if (!r.ok) {
+        expect(r.reason.startsWith(`invalid ${type}: `)).toBe(true);
+        expect(r.reason.split(`invalid ${type}:`).length).toBe(2);
+      }
+    }
+  });
   it("normalizes percent and number", () => {
     expect(normalizeValue("percent", "4.2%")).toEqual({ ok: true, value: 4.2 });
     expect(normalizeValue("number", "12 months")).toEqual({ ok: true, value: 12 });

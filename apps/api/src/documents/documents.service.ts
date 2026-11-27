@@ -137,7 +137,7 @@ export class DocumentsService {
         throw new ApiError(400, "INVALID_VALUE", `invalid ${row.fieldType}: a value is required`);
       }
       const n = normalizeValue(row.fieldType, body.value);
-      if (!n.ok) throw new ApiError(400, "INVALID_VALUE", `invalid ${row.fieldType}: ${n.reason}`);
+      if (!n.ok) throw new ApiError(400, "INVALID_VALUE", n.reason);
       result = await insertReview(this.db, {
         valueId,
         userId,
