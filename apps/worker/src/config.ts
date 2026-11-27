@@ -1,3 +1,4 @@
+import { assertNoDevSecretsInByok } from "@lomi/shared";
 export type AuthMode = "local" | "byok";
 export type LlmEnv = { LLM_BASE_URL?: string; LLM_API_KEY?: string; LLM_MODEL?: string };
 
@@ -53,6 +54,8 @@ export function loadConfig(env: Env): WorkerConfig {
   if (keyEncryptionKey && !/^[0-9a-fA-F]{64}$/.test(keyEncryptionKey)) {
     throw new Error("KEY_ENCRYPTION_KEY must be 64 hex characters (32 bytes)");
   }
+
+  if (mode === "byok") assertNoDevSecretsInByok({ sessionSecret: get(env, "SESSION_SECRET"), keyEncryptionKey });
 
   const llmEnv: LlmEnv = {};
   for (const k of ["LLM_BASE_URL", "LLM_API_KEY", "LLM_MODEL"] as const) {

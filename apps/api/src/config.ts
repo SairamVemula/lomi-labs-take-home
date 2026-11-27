@@ -1,4 +1,5 @@
 import { resolve } from "node:path";
+import { assertNoDevSecretsInByok } from "@lomi/shared";
 
 export type AuthMode = "local" | "byok";
 export type LlmEnv = { LLM_BASE_URL?: string; LLM_API_KEY?: string; LLM_MODEL?: string };
@@ -73,6 +74,8 @@ export function loadConfig(env: Env): ApiConfig {
   }
   const sessionSecret = get(env, "SESSION_SECRET");
   if (mode === "byok" && !sessionSecret) throw new Error("SESSION_SECRET is required when AUTH_MODE=byok");
+
+  if (mode === "byok") assertNoDevSecretsInByok({ sessionSecret, keyEncryptionKey });
 
   const llmEnv: LlmEnv = {};
   for (const k of ["LLM_BASE_URL", "LLM_API_KEY", "LLM_MODEL"] as const) {

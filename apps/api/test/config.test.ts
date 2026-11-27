@@ -1,3 +1,4 @@
+import { DEV_KEY_ENCRYPTION_KEY, DEV_SESSION_SECRET } from "@lomi/shared";
 import { describe, expect, it } from "vitest";
 import { loadConfig } from "../src/config.js";
 
@@ -62,5 +63,22 @@ describe("loadConfig", () => {
     expect(() => loadConfig({ ...base, AUTH_MODE: "guest" })).toThrow(/AUTH_MODE/);
     expect(() => loadConfig({ REDIS_URL: base.REDIS_URL })).toThrow(/DATABASE_URL/);
     expect(() => loadConfig({ DATABASE_URL: base.DATABASE_URL })).toThrow(/REDIS_URL/);
+  });
+});
+
+describe("dev default secrets", () => {
+  const e = { ...base, AUTH_MODE: "byok", PUBLIC_ORIGIN: "https://lomi.example.com" };
+  const real = { SESSION_SECRET: "real-secret", KEY_ENCRYPTION_KEY: "ab".repeat(32) };
+
+  it("byok rejects the dev defaults", () => {
+    expect(() => loadConfig({ ...e, ...real, SESSION_SECRET: DEV_SESSION_SECRET })).toThrow(/dev defaults/);
+    expect(() => loadConfig({ ...e, ...real, KEY_ENCRYPTION_KEY: DEV_KEY_ENCRYPTION_KEY })).toThrow(/dev defaults/);
+  });
+  it("byok accepts real values", () => {
+    expect(loadConfig({ ...e, ...real }).authMode).toBe("byok");
+  });
+  it("local accepts the dev defaults", () => {
+    const c = loadConfig({ ...base, SESSION_SECRET: DEV_SESSION_SECRET, KEY_ENCRYPTION_KEY: DEV_KEY_ENCRYPTION_KEY });
+    expect(c.authMode).toBe("local");
   });
 });

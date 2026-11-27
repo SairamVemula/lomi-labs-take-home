@@ -1,3 +1,4 @@
+import { DEV_KEY_ENCRYPTION_KEY, DEV_SESSION_SECRET } from "@lomi/shared";
 import { describe, expect, it } from "vitest";
 import { loadConfig } from "../src/config.js";
 
@@ -39,5 +40,22 @@ describe("loadConfig", () => {
   it("passes LLM_* through", () => {
     const c = loadConfig({ ...base, LLM_BASE_URL: "http://localhost:11434/v1", LLM_MODEL: "llama", LLM_API_KEY: "k" });
     expect(c.llmEnv).toEqual({ LLM_BASE_URL: "http://localhost:11434/v1", LLM_MODEL: "llama", LLM_API_KEY: "k" });
+  });
+});
+
+describe("dev default secrets", () => {
+  const e = { ...base, AUTH_MODE: "byok", PUBLIC_ORIGIN: "https://lomi.example.com" };
+  const real = { SESSION_SECRET: "real-secret", KEY_ENCRYPTION_KEY: "ab".repeat(32) };
+
+  it("byok rejects the dev defaults", () => {
+    expect(() => loadConfig({ ...e, ...real, SESSION_SECRET: DEV_SESSION_SECRET })).toThrow(/dev defaults/);
+    expect(() => loadConfig({ ...e, ...real, KEY_ENCRYPTION_KEY: DEV_KEY_ENCRYPTION_KEY })).toThrow(/dev defaults/);
+  });
+  it("byok accepts real values", () => {
+    expect(loadConfig({ ...e, ...real }).authMode).toBe("byok");
+  });
+  it("local accepts the dev defaults", () => {
+    const c = loadConfig({ ...base, SESSION_SECRET: DEV_SESSION_SECRET, KEY_ENCRYPTION_KEY: DEV_KEY_ENCRYPTION_KEY });
+    expect(c.authMode).toBe("local");
   });
 });
