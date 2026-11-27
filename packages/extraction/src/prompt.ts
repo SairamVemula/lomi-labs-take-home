@@ -14,7 +14,10 @@ function valueSchema(type: FieldType): object {
             type: "object",
             properties: {
               amount: { type: "string", description: "Decimal number, no currency symbols or thousands separators" },
-              currency: { type: "string", description: "ISO 4217 currency code" },
+              currency: {
+                type: "string",
+                description: "ISO 4217 currency code; map a symbol to its code ($ means USD unless another currency is stated)",
+              },
             },
             required: ["amount", "currency"],
             additionalProperties: false,
@@ -35,6 +38,7 @@ Rules:
 - For every field return "value", "evidence" and "gap_reason".
 - "evidence" must be a verbatim quote copied exactly, character for character, from the document text that supports the value. Do not paraphrase, reformat, or fix typos.
 - Copy values exactly as the document states them; only normalise to the requested format (dates as YYYY-MM-DD, money as a decimal string plus ISO 4217 currency, percentages as numbers).
+- Money: drop the symbol and thousands separators from the amount, and map the currency symbol to its ISO code ($ = USD unless another dollar currency is stated, € = EUR, £ = GBP, ¥ = JPY). This mapping is normalisation, not a guess. Example: "Total Due: $6,126.45" gives {"amount":"6126.45","currency":"USD"}.
 - If a field is absent or you are not certain, set "value" to null, "evidence" to null, and explain briefly in "gap_reason". Never guess or infer values that are not in the text.
 - When a value is present, "gap_reason" must be null.
 - Respond only with JSON matching the schema.`;
