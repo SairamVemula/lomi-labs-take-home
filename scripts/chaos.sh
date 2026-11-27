@@ -12,12 +12,12 @@
 # (COMPOSE_FILE keeps the worker restart on the e2e config; without it the worker would come back with no LLM.)
 # Leg (b) works with any LLM setup (including none: documents then end `failed`, never stuck).
 #
-# Tunables (env): WEB_URL (default http://localhost:3000), EXTRACTING_WAIT_S (60), SETTLE_WAIT_S (120),
+# Tunables (env): WEB_URL (default http://127.0.0.1:3000), EXTRACTING_WAIT_S (60), SETTLE_WAIT_S (120),
 # REDIS_WAIT_S (90), REQUIRE_DATA (1 = leg (b) also demands non-zero value and review counts), DOC_EXTERNAL_ID (doc-invoice-001), V2_FILE (assignment/fixtures/documents/invoice-001.v2.pdf).
 set -uo pipefail
 
 cd "$(dirname "$0")/.."
-WEB_URL=${WEB_URL:-http://localhost:3000}
+WEB_URL=${WEB_URL:-http://127.0.0.1:3000}
 EXTRACTING_WAIT_S=${EXTRACTING_WAIT_S:-60}
 SETTLE_WAIT_S=${SETTLE_WAIT_S:-120}
 REDIS_WAIT_S=${REDIS_WAIT_S:-90}
