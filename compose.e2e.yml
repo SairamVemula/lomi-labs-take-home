@@ -1,0 +1,35 @@
+# E2E / chaos override: `docker compose -f compose.yml -f compose.e2e.yml up -d --build`.
+# Points api + worker at a fake OpenAI-compatible server (recorded answers, no network, no key).
+# FAKE_LLM_DELAY_MS delays every completion (chaos leg (a) uses ~20000 to kill the worker mid-extraction).
+x-e2e-llm: &e2e-llm
+  AUTH_MODE: local
+  LLM_BASE_URL: http://fake-llm:4010/v1
+  LLM_API_KEY: fake
+  LLM_MODEL: fake-model
+
+services:
+  fake-llm:
+    build:
+      context: .
+      dockerfile: packages/testing/Dockerfile
+    image: lomi-fake-llm
+    environment:
+      FAKE_LLM_DELAY_MS: ${FAKE_LLM_DELAY_MS:-0}
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:4010/health').then(r=>process.exit(r.ok?0:1),()=>process.exit(1))"]
+      interval: 2s
+      timeout: 3s
+      retries: 20
+
+  migrate:
+    environment: *e2e-llm
+
+  api:
+    environment: *e2e-llm
+    depends_on:
+      fake-llm: { condition: service_healthy }
+
+  worker:
+    environment: *e2e-llm
+    depends_on:
+      fake-llm: { condition: service_healthy }

@@ -1,0 +1,5 @@
+{
+  "extends": "@lomi/config/tsconfig.base.json",
+  "compilerOptions": { "outDir": "dist", "rootDir": ".", "noEmit": true },
+  "include": ["src", "test", "drizzle.config.ts", "vitest.config.ts", "vitest.integration.config.ts"]
+}

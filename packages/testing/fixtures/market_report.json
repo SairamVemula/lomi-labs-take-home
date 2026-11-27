@@ -1,0 +1,8 @@
+{
+  "report_quarter": { "value": "Q3 2025", "evidence": "Reporting Period: Q3 2025", "gap_reason": null },
+  "market_area": { "value": "Eastport-Harborview Submarket", "evidence": "Market Area: Eastport-Harborview Submarket", "gap_reason": null },
+  "vacancy_rate": { "value": 4.2, "evidence": "overall vacancy rate declined to 4.2%", "gap_reason": null },
+  "average_rent_1br": { "value": { "amount": "1985", "currency": "USD" }, "evidence": "one-bedroom unit reached $1,985 per month", "gap_reason": null },
+  "year_over_year_rent_growth": { "value": 3.8, "evidence": "a year-over-year increase of 3.8%", "gap_reason": null },
+  "median_household_income": { "value": null, "evidence": null, "gap_reason": "median household income is not stated in this excerpt" }
+}

@@ -1,0 +1,40 @@
+/* Lomi Review — Tailwind 4 theme generated from the Lomi Review design system
+   (https://claude.ai/artifact/3pykxKtRkUdnH2ZWryn1yM, tokens.json v1).
+   The app ships dark-only (user decision 2026-11-27): these are the design system's
+   "dark" theme values. Light values live in the design system if a light theme is added later.
+   Use Tailwind opacity modifiers for tints, e.g. bg-pending/15 for a badge ground. */
+@theme {
+  --color-surface: #111418;
+  --color-surface-raised: #1a1e24;
+  --color-ink: #eceff3;
+  --color-ink-muted: #9aa4b1;
+  --color-border: #2c323b;
+  --color-accent: #7c9cf5;
+  --color-on-accent: #0b1020;
+  --color-pending: #f0a24a;
+  --color-approved: #4ade80;
+  --color-corrected: #b794f6;
+  --color-carried: #2dd4bf;
+  --color-failed: #f87171;
+  --color-highlight: #5c4a12;
+
+  --font-sans: "Inter", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, "SFMono-Regular", Consolas, monospace;
+
+  --text-display: 32px;
+  --text-display--line-height: 38px;
+  --text-title: 20px;
+  --text-title--line-height: 28px;
+  --text-body: 15px;
+  --text-body--line-height: 22px;
+  --text-label: 13px;
+  --text-label--line-height: 18px;
+  --text-caption: 12px;
+  --text-caption--line-height: 16px;
+  --text-evidence: 13px;
+  --text-evidence--line-height: 20px;
+
+  --radius-sm: 4px;
+  --radius-md: 8px;
+  --radius-pill: 999px;
+}

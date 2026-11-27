@@ -1,0 +1,11 @@
+**/node_modules
+**/.next
+**/dist
+**/.turbo
+.git
+.superpowers
+.env*
+!.env.example
+assignment/jd.md
+docs
+**/*.tsbuildinfo

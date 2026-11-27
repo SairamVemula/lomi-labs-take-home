@@ -1,0 +1,21 @@
+{
+  "name": "@lomi/testing",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "node src/fake-openai-server.ts",
+    "lint": "eslint .",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "@lomi/config": "workspace:*",
+    "@lomi/extraction": "workspace:*",
+    "@lomi/shared": "workspace:*",
+    "@types/node": "^24.0.0",
+    "eslint": "^9.0.0",
+    "typescript": "^5.9.0",
+    "vitest": "^3.2.0"
+  }
+}
