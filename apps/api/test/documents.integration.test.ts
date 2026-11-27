@@ -6,7 +6,7 @@ import { eq } from "drizzle-orm";
 import request from "supertest";
 import { GenericContainer, Wait, type StartedTestContainer } from "testcontainers";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
-import { documents, documentVersions, extractedValues, extractionRuns, type Db } from "@lomi/db";
+import { MAX_VERSIONS_PER_DOCUMENT, addVersion, documents, documentVersions, extractedValues, extractionRuns, type Db } from "@lomi/db";
 import { LocalFileStorage, S3FileStorage, type FileStorage } from "@lomi/storage";
 import { createTestApp, type TestApp } from "./app.js";
 import { startTestDb } from "./setup.js";
@@ -207,6 +207,33 @@ describe("uploads", () => {
 });
 
 describe("versions", () => {
+  it("rejects a new version with 409 VERSION_LIMIT once the document has 20", async () => {
+    const c = await login(t, "vlimit");
+    const created = await upload(c, "l.pdf", "invoice", pdf("l1"));
+    const id = created.body.id as string;
+    const [doc] = await db.select().from(documents).where(eq(documents.id, id));
+    for (let i = 2; i < MAX_VERSIONS_PER_DOCUMENT; i++) {
+      await addVersion(db, {
+        documentId: id,
+        userId: doc!.userId,
+        file: { storageKey: `k${i}`, originalFilename: "l.pdf", sizeBytes: 1, sha256: `h${i}` },
+      });
+    }
+    await db.update(extractionRuns).set({ status: "extracted" }); // keep the in-flight cap out of the way
+    const send = (body: string) =>
+      request(http())
+        .post(`/documents/${id}/versions`)
+        .set("Cookie", c)
+        .attach("file", pdf(body), { filename: "l.pdf", contentType: "application/pdf" });
+    const twentieth = await send("l20");
+    expect(twentieth.status).toBe(201);
+    expect(twentieth.body.version).toBe(20);
+    await db.update(extractionRuns).set({ status: "extracted" });
+    const over = await send("l21");
+    expect(over.status).toBe(409);
+    expect(over.body.code).toBe("VERSION_LIMIT");
+  });
+
   it("two concurrent uploads become versions 2 and 3; a v1 value is then not reviewable", async () => {
     const c = await login(t, "versions");
     const created = await upload(c, "v.pdf", "invoice", pdf("v1"));

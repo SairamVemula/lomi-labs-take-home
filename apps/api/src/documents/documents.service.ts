@@ -2,6 +2,7 @@ import { Inject, Injectable } from "@nestjs/common";
 import { and, count, eq, inArray } from "drizzle-orm";
 import {
   addVersion,
+  MAX_VERSIONS_PER_DOCUMENT,
   createDocumentWithVersion,
   createRetryRun,
   documents,
@@ -37,6 +38,9 @@ export const MAX_IN_FLIGHT = 5;
 export type UploadedFile = { originalname: string; buffer: Buffer };
 
 const notFound = () => new ApiError(404, "NOT_FOUND", "Not found");
+
+const versionLimit = () =>
+  new ApiError(409, "VERSION_LIMIT", `A document can have at most ${MAX_VERSIONS_PER_DOCUMENT} versions`);
 
 @Injectable()
 export class DocumentsService {
@@ -98,6 +102,11 @@ export class DocumentsService {
       .from(documents)
       .where(and(eq(documents.id, documentId), eq(documents.userId, userId)));
     if (!owned) throw notFound();
+    const [{ n: versionCount } = { n: 0 }] = await this.db
+      .select({ n: count() })
+      .from(documentVersions)
+      .where(eq(documentVersions.documentId, documentId));
+    if (versionCount >= MAX_VERSIONS_PER_DOCUMENT) throw versionLimit();
     await this.assertCapacity(userId);
     const stored = await this.store(file);
     try {
@@ -106,6 +115,7 @@ export class DocumentsService {
       return { id: documentId, version: v.versionNumber, status: "queued" };
     } catch (err) {
       if (err instanceof Error && err.message === "document not found") throw notFound();
+      if (err instanceof Error && err.message === "version limit") throw versionLimit();
       throw err;
     }
   }

@@ -43,6 +43,9 @@ export async function createDocumentWithVersion(
   });
 }
 
+/** Versions per document (each keeps its PDF and parsed text on disk). */
+export const MAX_VERSIONS_PER_DOCUMENT = 20;
+
 export async function addVersion(
   db: Queryable,
   args: { documentId: string; userId: string; file: StoredFile },
@@ -59,6 +62,7 @@ export async function addVersion(
       .select({ n: documentVersions.versionNumber })
       .from(documentVersions)
       .where(eq(documentVersions.documentId, args.documentId));
+    if (existing.length >= MAX_VERSIONS_PER_DOCUMENT) throw new Error("version limit");
     const versionNumber = existing.reduce((m, r) => Math.max(m, r.n), 0) + 1;
 
     const [ver] = await tx
