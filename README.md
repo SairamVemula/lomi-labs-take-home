@@ -14,12 +14,14 @@ This was built with AI coding tools. The session logs are submitted separately a
 docker compose up --build
 ```
 
-No `.env` is needed. Open http://localhost:3000. There is no login in local mode, and the three sample documents are already seeded at version 1.
+No `.env` is needed. Open http://localhost:3000. The port is bound to `127.0.0.1` only, because local mode has no login and must not be reachable from the network. There is no login in local mode, and the three sample documents are already seeded at version 1.
 
 **LLM key**
 
 - With a key: `cp .env.example .env`, set `LLM_BASE_URL`, `LLM_API_KEY`, `LLM_MODEL`, then `docker compose up --build`.
 - Without a key: start the stack anyway. A banner links to an in-app settings form. Saving it verifies the provider, stores the key AES-GCM encrypted, and retries every failed run.
+- Ollama running on the host: use the "Ollama" preset (`http://host.docker.internal:11434/v1`); compose maps that name to the host for the api and worker. `localhost` would point at the container itself.
+- In the hosted (byok) mode, logging in again after a logout re-queues runs that failed only because no key was stored ("No LLM configured"); other failures stay failed until you retry them.
 - The provider must support `response_format: json_schema` (checked on save and at login). Nothing else is sent (no `temperature`, no `max_tokens`).
 
 **What to click first**
@@ -156,12 +158,12 @@ Other worker jobs: byok users idle more than 7 days are deleted (cascade); an ho
 
 **"Unchanged" (`packages/extraction/src/carryover.ts`).** Per field name, against the most recent other version that has an `extracted` run:
 
-- unchanged iff **normalised evidence** (NFKC, quote/dash folding, whitespace collapse, casefold) **and canonical value** are equal. For gaps: both null and the same gap reason.
+- unchanged iff the **canonical value** is equal **and** the evidence agrees: either the **normalised evidence** (NFKC, quote/dash folding, whitespace collapse, casefold) is equal, or the **cross-text check** passes: the baseline's quote is found verbatim in the NEW version's parsed text, or the new quote is found verbatim in the BASELINE version's parsed text. This keeps a merely reworded quote ("Invoice Number: INV-2025-0847" vs "INV-2025-0847") from dropping a review. A different value is always `changed`, whatever the quotes say. For gaps: both null and the same gap reason.
 - Matching is by field name, not position, so text moving around the page or shifting between pages does not matter; only the quoted passage and the value do.
 - Unchanged and the baseline value has a review -> insert a copy with `origin = carried_over`. Unchanged without a review -> pending, `change_status = unchanged`.
 - Otherwise `changed` (or `new` if there is no baseline) -> pending, with `previous_value_id` set.
 
-Known limit: a quote that is reworded but means the same counts as changed. That is the safe direction (a reviewer looks again), not a silent carry.
+Known limit: a reworded quote whose old text is no longer in the new document, and which is not in the old one either, counts as changed. That is the safe direction (a reviewer looks again), not a silent carry. The UI names the baseline by its real version number, which is not always the previous one (after a superseded upload it can be older).
 
 ---
 
@@ -221,6 +223,16 @@ bash scripts/chaos.sh          # both legs
 
 The `COMPOSE_FILE` export keeps the worker restart on the e2e config (otherwise it comes back with no LLM). On Windows, the default `COMPOSE_FILE` separator is `;`, so the explicit `COMPOSE_PATH_SEPARATOR=:` in the export matters: run the script from Git Bash with both variables exported as shown. Tunables are listed at the top of the script.
 
+### What was verified
+
+All locally on 2026-11-27, with the fake LLM:
+
+- The e2e Playwright flow passed against the e2e compose stack.
+- Chaos leg (a): the worker killed mid-extraction recovered, and the run reached `extracted`.
+- Chaos leg (b): `FLUSHALL` plus a full restart kept the data identical (3 documents / 6 versions / 31 values / 14 reviews).
+
+Not yet run against a real LLM or the live site.
+
 ---
 
 ## 8. File storage
@@ -250,7 +262,8 @@ Single VPS at `lomi.sairam.cc`. GitHub Actions -> GHCR -> SSH.
 ## 10. What I cut, and what I would do next
 
 - **No review editing or undo.** Reviews are append-only; a mistaken approve is fixed by submitting another review, and the UI has no history view of reviews.
-- **Limits are not transactional.** The 25-document and 5-in-flight checks are count-then-insert, so concurrent requests can overshoot slightly.
+- **Limits are not transactional.** The 25-document and 5-in-flight checks are count-then-insert, so concurrent requests can overshoot slightly. (The 20-versions-per-document cap is enforced under the document lock, so it does not overshoot; it answers `409 VERSION_LIMIT`.)
+- **A value is not cross-checked against its quote.** Only the quote's presence in the document text is verified, not that the quote actually supports the extracted value.
 - **No SSE/WebSocket.** 2s polling while busy.
 - **S3 dev signed-URL host** (section 8).
 - **Single region, single VPS, single worker process.** No horizontal scale story beyond adding workers (the claim is atomic, so that is safe).
