@@ -1,4 +1,6 @@
-# TLS is automatic (Let's Encrypt) once the A record for lomi.sairam.cc points at this host.
+# Site block for the VPS's shared Caddy (the one already serving 80/443 for every project).
+# It lives in that proxy's Caddyfile, not in a Caddy of our own; compose.prod.yml puts `web` on the
+# proxy's network as `lomi-web`. TLS is automatic once the A record for lomi.sairam.cc points at the host.
 lomi.sairam.cc {
 	encode zstd gzip
 
@@ -9,5 +11,5 @@ lomi.sairam.cc {
 		-Server
 	}
 
-	reverse_proxy web:3000
+	reverse_proxy lomi-web:3000
 }
