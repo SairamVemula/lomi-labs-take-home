@@ -1,6 +1,8 @@
 # Production overlay: docker compose -f compose.yml -f compose.prod.yml up -d
 # Every secret comes from ~/lomi/.env on the VPS (written by the deploy workflow); there are no defaults.
-# Only caddy publishes ports (80/443). The api must never be reachable from outside: its login throttle
+# Nothing here publishes a port. The VPS already runs one shared Caddy on 80/443 for every project; `web`
+# joins that proxy's Docker network (EDGE_NETWORK) as `lomi-web`, and the shared Caddyfile carries the
+# lomi.sairam.cc block (see ./Caddyfile). The api must never be reachable from outside: its login throttle
 # trusts X-Forwarded-For, which is only trustworthy when every hop is ours (caddy -> web rewrite -> api).
 x-prod-env: &prod-env
   AUTH_MODE: byok
@@ -43,20 +45,13 @@ services:
     image: ghcr.io/sairamvemula/lomi-web:${IMAGE_TAG:-latest}
     restart: unless-stopped
     ports: !reset []
+    networks:
+      default: {}
+      edge:
+        aliases: [lomi-web]
 
-  caddy:
-    image: caddy:2
-    restart: unless-stopped
-    ports:
-      - "80:80"
-      - "443:443"
-    volumes:
-      - ./Caddyfile:/etc/caddy/Caddyfile:ro
-      - caddy_data:/data
-      - caddy_config:/config
-    depends_on:
-      - web
-
-volumes:
-  caddy_data:
-  caddy_config:
+networks:
+  # The shared reverse proxy's network (created by the project that owns that Caddy).
+  edge:
+    external: true
+    name: ${EDGE_NETWORK:-booksland-sales-tracker_bookstore_net}
