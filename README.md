@@ -8,6 +8,48 @@ This was built with AI coding tools. The session logs are submitted separately a
 
 ---
 
+## 0. Architecture at a glance
+
+```mermaid
+flowchart TB
+  user([Reviewer's browser])
+
+  subgraph web_app["apps/web (Next.js)"]
+    ui["Review UI<br/>polls every 2s while busy"]
+    proxy["/api/* rewrite"]
+  end
+
+  subgraph api_app["apps/api (NestJS)"]
+    auth["Auth guard<br/>local: no login · byok: sid cookie"]
+    docs["Documents · versions<br/>reviews · progress"]
+  end
+
+  subgraph worker_app["apps/worker (Nest, own process)"]
+    proc["Run processor<br/>claim · heartbeat · finalize"]
+    recon["Reconciler (every 30s)<br/>+ cleanup, orphan sweep"]
+  end
+
+  pg[("Postgres<br/>system of record + outbox")]
+  redis[("Redis / BullMQ<br/>run ids only")]
+  store[("File storage<br/>local disk or S3")]
+  llm{{"OpenAI-compatible LLM<br/>json_schema output"}}
+
+  user --> ui --> proxy --> auth --> docs
+  docs -- "1. store PDF" --> store
+  docs -- "2. commit version + queued run" --> pg
+  docs -- "3. enqueue jobId = runId" --> redis
+  redis -- "deliver run id" --> proc
+  proc -- "read PDF" --> store
+  proc -- "parse, prompt" --> llm
+  proc -- "values, reviews, run outcome" --> pg
+  recon -- "re-add queued, fail expired leases" --> redis
+  recon --> pg
+```
+
+Read it as: **the API never waits for the LLM**. It writes the file, commits the version and a `queued` run in Postgres, and drops the run id into Redis. The worker does the slow part and writes every result back to Postgres. Redis can be wiped at any time: the reconciler rebuilds the queue from Postgres. All shared logic (evidence checks, carry-over, the zod contract, storage, DB access) lives in `packages/*` and is used by both processes.
+
+---
+
 ## 1. Run it
 
 ```sh
@@ -53,6 +95,25 @@ Turborepo + pnpm, Node 24, TypeScript strict.
 | `packages/testing` | Fake OpenAI-compatible server used by e2e and chaos runs |
 | `packages/config` | Shared tsconfig and eslint config |
 
+Internal dependencies (from each `package.json`; `@lomi/config` is used by every package for tooling only):
+
+```mermaid
+flowchart TD
+  web["apps/web"] --> shared["packages/shared<br/>zod contract, field types"]
+  api["apps/api"] --> db["packages/db<br/>schema, repos, boot"]
+  api --> extraction["packages/extraction<br/>evidence, carry-over, LLM client"]
+  api --> storage["packages/storage<br/>local / S3"]
+  api --> shared
+  worker["apps/worker"] --> db
+  worker --> extraction
+  worker --> storage
+  worker --> shared
+  db --> shared
+  db --> storage
+  extraction --> shared
+  testing["packages/testing<br/>fake OpenAI server"] -. "used by e2e + chaos" .-> worker
+```
+
 Why the boundaries:
 
 - **Extraction logic is pure.** Evidence validation and carry-over are the parts most likely to be wrong, so they live in `packages/extraction` with no DB, queue or network and are unit-tested directly.
@@ -78,20 +139,96 @@ CI (`.github/workflows/ci.yml`, on PRs and pushes to main):
 
 ```mermaid
 erDiagram
-  users ||--o{ sessions : has
-  users ||--o{ documents : owns
-  documents ||--o{ document_versions : "has versions"
-  documents }o--o| document_versions : "current_version_id"
+  users ||--o{ sessions : "has"
+  users ||--o{ documents : "owns"
+  documents ||--|{ document_versions : "has versions"
+  documents |o--o| document_versions : "current_version_id"
   document_versions ||--o{ extraction_runs : "attempts"
-  document_versions }o--o| extraction_runs : "active_run_id"
-  document_versions ||--o{ extracted_values : "has"
+  document_versions |o--o| extraction_runs : "active_run_id"
+  document_versions ||--o{ extracted_values : "one per field"
   extraction_runs ||--o{ extracted_values : "produced"
   extracted_values ||--o{ reviews : "append-only"
-  extracted_values }o--o| extracted_values : "previous_value_id"
-  reviews }o--o| reviews : "carried_from_review_id"
+  extracted_values |o--o| extracted_values : "previous_value_id"
+  reviews |o--o| reviews : "carried_from_review_id"
+
+  users {
+    uuid id PK
+    text identity_hash UK "HMAC(base URL + key); 'local' for local mode"
+    text base_url "nullable"
+    text model "nullable"
+    bytea encrypted_key "AES-256-GCM, nullable"
+    boolean is_local
+    timestamptz created_at
+    timestamptz last_seen_at "idle byok users deleted after 7 days"
+  }
+  sessions {
+    text token_hash PK "sha256 of the sid cookie"
+    uuid user_id FK "cascade"
+    timestamptz expires_at "7-day sliding"
+  }
+  documents {
+    uuid id PK
+    uuid user_id FK "cascade"
+    text external_id "fixture id; unique with user_id"
+    doc_type type "invoice | lease | market_report"
+    text title
+    uuid current_version_id FK "set null"
+    timestamptz created_at
+  }
+  document_versions {
+    uuid id PK
+    uuid document_id FK "cascade; unique with version_number"
+    int version_number
+    text storage_key "pdfs/slug-sha256.pdf (bytes never in Postgres)"
+    text original_filename
+    text sha256
+    int size_bytes
+    text parsed_text "stored once per version"
+    uuid active_run_id FK "the run whose result counts"
+    timestamptz created_at
+  }
+  extraction_runs {
+    uuid id PK "also the BullMQ jobId"
+    uuid version_id FK "cascade; unique with attempt"
+    int attempt "1..3"
+    run_status status "queued | extracting | extracted | failed | superseded"
+    timestamptz lease_expires_at "heartbeat every 15s, 60s lease"
+    text error
+    text error_kind "transient | permanent"
+    text model
+    jsonb prompt
+    jsonb raw_response
+    timestamptz created_at
+    timestamptz started_at
+    timestamptz finished_at
+  }
+  extracted_values {
+    uuid id PK
+    uuid version_id FK "cascade; unique with field_name"
+    uuid run_id FK "cascade"
+    text field_name
+    text field_type "string | date | money | percent | number"
+    jsonb value "null = gap"
+    text evidence "verbatim quote"
+    int evidence_start "offset into parsed_text"
+    int evidence_end
+    text gap_reason
+    change_status change_status "new | unchanged | changed"
+    uuid previous_value_id FK "baseline value, set null"
+  }
+  reviews {
+    uuid id PK
+    uuid value_id FK "cascade"
+    review_action action "approved | corrected"
+    jsonb corrected_value
+    text note
+    review_origin origin "manual | carried_over"
+    uuid carried_from_review_id FK "set null"
+    timestamptz created_at "clock_timestamp(): latest row wins"
+  }
 ```
 
-(`packages/db/src/schema.ts` is the source of truth; one migration in `packages/db/drizzle`.)
+(`packages/db/src/schema.ts` is the source of truth; one migration in `packages/db/drizzle`. PK = primary key, FK = foreign key, UK = unique.)
 
 How the pieces relate:
 
@@ -119,6 +256,62 @@ API surface: `POST /documents`, `POST /documents/:id/versions`, `GET /documents`
 | Holds | documents, versions, parsed text, runs (status, lease, error, prompt, raw response), values, reviews | one job per run: `jobId = runId`, `attempts: 1` |
 | Lost if wiped | everything that matters | nothing; the reconciler rebuilds it from `queued` runs |
 | Persistence | yes | off (`--save "" --appendonly no`), on purpose |
+
+Upload to review, end to end:
+
+```mermaid
+%%{init: {"sequence": {"actorMargin": 24, "width": 110, "messageMargin": 28}}}%%
+sequenceDiagram
+  autonumber
+  actor R as Reviewer
+  participant W as web (Next.js)
+  participant A as api (Nest)
+  participant S as File storage
+  participant P as Postgres
+  participant Q as Redis (BullMQ)
+  participant K as worker
+  participant L as LLM
+
+  R->>W: Upload PDF (new document or new version)
+  W->>A: POST /documents or /documents/:id/versions
+  A->>S: put pdfs/slug-sha256.pdf
+  A->>P: one transaction:<br/>version + run(queued), active_run_id, current_version_id
+  A->>Q: add job (jobId = runId)<br/>a failure is only logged
+  A-->>W: 201 queued<br/>(never waits for the LLM)
+  loop every 2s while queued/extracting
+    W->>A: GET /documents/:id
+  end
+  Q->>K: deliver run id
+  K->>P: claim: SET extracting + lease<br/>WHERE status = queued
+  Note over K,P: 0 rows = duplicate delivery, drop it
+  K->>P: still the current version?<br/>if not: superseded, stop
+  K->>S: read PDF, parse text<br/>(once per version)
+  K->>L: chat completion<br/>strict json_schema
+  L-->>K: per field: value,<br/>verbatim evidence, gap_reason
+  K->>K: validate evidence, normalise,<br/>diff against baseline
+  K->>P: one transaction: lock document, re-read run,<br/>insert values + carried reviews, extracted
+  W->>A: GET /documents/:id
+  A-->>W: values, evidence offsets, previous value + review
+  R->>W: Approve or correct
+  W->>A: POST /values/:id/review (append-only row)
+```
+
+Extraction run lifecycle (one row in `extraction_runs` per attempt):
+
+```mermaid
+stateDiagram-v2
+  [*] --> queued: upload, retry button, or transient retry
+  queued --> extracting: worker claims (atomic UPDATE)
+  queued --> queued: Redis lost the job, reconciler re-adds it
+  extracting --> extracted: finalize guard passes, values written
+  extracting --> superseded: a newer version became current
+  extracting --> failed: LLM / parse / storage error
+  extracting --> failed: lease expired (worker died), reconciler
+  failed --> [*]: permanent, or 3rd attempt (document shows Failed + Retry)
+  failed --> queued: transient and attempt < 3 (new run row, attempt + 1)
+  extracted --> [*]
+  superseded --> [*]
+```
 
 Flow:
 
@@ -155,6 +348,33 @@ Other worker jobs: byok users idle more than 7 days are deleted (cascade); an ho
 **Extraction.** The LLM returns per field `{ value | null, evidence | null, gap_reason | null }` under a strict `json_schema` built from `assignment/fixtures/expected-fields.json`. Values are normalised by type (`string` trimmed, `date` -> `YYYY-MM-DD`, `money` -> `{amount, currency}`, `percent`/`number` -> number). Unparseable -> gap "value not parseable as <type>".
 
 **Evidence validation (`packages/extraction/src/evidence.ts`).** The quote must be a **case-sensitive substring of that version's stored `parsed_text`** after folding both sides: NFKC, curly quotes and dashes folded to ASCII, whitespace runs collapsed to one space (PDF line breaks). If it is not found, or the quote is empty, the value is **discarded and stored as a gap** with reason "evidence not found verbatim in document text". A field the LLM could not find is a gap with the LLM's reason. Offsets are mapped back to the raw text for highlighting. Nothing is ever kept without a verified quote.
+
+How one field goes from the LLM's answer to what the reviewer sees:
+
+```mermaid
+flowchart TD
+  start(["LLM returns value, evidence, gap_reason"]) --> hasval{"value present?"}
+  hasval -- no --> gap1["Gap with the LLM's reason"]
+  hasval -- yes --> hasev{"evidence quoted?"}
+  hasev -- no --> gap2["Gap: no evidence quoted"]
+  hasev -- yes --> found{"quote found in this version's<br/>parsed_text (folded, case-sensitive)?"}
+  found -- no --> gap3["Gap: evidence not found verbatim<br/>(hallucination defense)"]
+  found -- yes --> norm{"value parses as its field type?"}
+  norm -- no --> gap4["Gap: value not parseable as type"]
+  norm -- yes --> kept["Value kept with evidence offsets"]
+
+  kept --> base{"baseline version exists?<br/>(newest other version with an extracted run)"}
+  gap1 --> base
+  gap2 --> base
+  gap3 --> base
+  gap4 --> base
+  base -- no --> isnew["change_status = new, pending"]
+  base -- yes --> same{"same canonical value AND<br/>same evidence, or either quote found<br/>verbatim in the other version's text?"}
+  same -- no --> changed["changed, pending<br/>UI shows previous value + review"]
+  same -- yes --> reviewed{"baseline value has a review?"}
+  reviewed -- yes --> carried["Carried over: review copied<br/>(origin = carried_over)"]
+  reviewed -- no --> unchanged["unchanged, pending"]
+```
 
 **"Unchanged" (`packages/extraction/src/carryover.ts`).** Per field name, against the most recent other version that has an `extracted` run:
 
@@ -250,6 +470,39 @@ Not yet run against a real LLM or the live site.
 ## 9. Deploy
 
 Single VPS at `lomi.sairam.cc`. GitHub Actions -> GHCR -> SSH.
+
+```mermaid
+flowchart TB
+  dev["git push / merge to main"] --> ci["CI workflow<br/>lint, typecheck, test, build,<br/>integration, e2e"]
+  ci -- "success on main" --> build["Deploy: build + push<br/>lomi-api, lomi-worker, lomi-web"]
+  build --> ghcr[("GHCR<br/>tag = commit SHA")]
+  build -- "SSH (deploy key):<br/>compose files + .env" --> vps
+
+  subgraph vps["VPS"]
+    caddy["Shared Caddy :80/:443<br/>TLS, one block per site"]
+    subgraph edge["Docker network booksland-sales-tracker_bookstore_net"]
+      webc["lomi-web :3000"]
+    end
+    subgraph lomi["compose project lomi (no published ports)"]
+      apic["api :3001"]
+      workc["worker"]
+      pgc[("postgres")]
+      rc[("redis")]
+      files[("files volume")]
+    end
+  end
+
+  ghcr -- "pull one image at a time, with retries" --> vps
+  internet([Internet]) --> caddy --> webc --> apic
+  apic --> pgc
+  apic --> rc
+  workc --> pgc
+  workc --> rc
+  apic --> files
+  workc --> files
+```
+
+`web` is the only lomi container on the shared proxy's network, so the hop chain is always Caddy -> web -> api (hence `TRUST_PROXY_HOPS=2`), and nothing else is reachable from outside.
 
 - `deploy.yml` runs after CI succeeds on a push to main (or by manual dispatch): builds `lomi-api`, `lomi-worker`, `lomi-web` and pushes them to `ghcr.io` tagged with the commit SHA and `latest`; copies `compose.yml`, `compose.prod.yml`, `Caddyfile` and a generated `.env` to `~/lomi` on the VPS; pulls the images one at a time with retries (parallel pulls from GHCR's CDN get reset on this VPS), `up -d`; then checks `https://lomi.sairam.cc/api/health`.
 - Prod overlay: `AUTH_MODE=byok`, no secret defaults (compose fails if any is unset), **no published ports**, `TRUST_PROXY_HOPS=2` (Caddy -> Next -> api). The VPS already runs one shared Caddy on 80/443 for all its projects, so lomi doesn't bring its own: `web` joins that proxy's Docker network (`EDGE_NETWORK`, default `booksland-sales-tracker_bookstore_net`) as `lomi-web`, and the block in `./Caddyfile` is added once to the shared proxy's Caddyfile (one-time server step; TLS is automatic). The api is never published: its login throttle trusts `X-Forwarded-For`, which is only safe when every hop is ours.
