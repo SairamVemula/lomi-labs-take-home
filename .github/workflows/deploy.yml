@@ -123,7 +123,17 @@ jobs:
           SSH_OPTS="-i $HOME/.ssh/deploy_key -o StrictHostKeyChecking=accept-new -o IdentitiesOnly=yes"
           # Token goes over stdin, never on a command line.
           printf '%s' "$GHCR_TOKEN" | ssh $SSH_OPTS "$VPS_USER@$VPS_HOST" "docker login ghcr.io -u '$GHCR_USER' --password-stdin"
-          ssh $SSH_OPTS "$VPS_USER@$VPS_HOST" 'cd ~/lomi && docker compose -f compose.yml -f compose.prod.yml pull && docker compose -f compose.yml -f compose.prod.yml up -d --remove-orphans && docker image prune -f'
+          # Pull one image at a time and retry: on the VPS, parallel pulls from GHCR's CDN over IPv6
+          # get their connections reset (reproduced: 3/3 parallel pulls failed, 3/3 single pulls
+          # passed). Layers already downloaded are kept, so a retry only fetches what's missing.
+          ssh $SSH_OPTS "$VPS_USER@$VPS_HOST" 'set -e; cd ~/lomi; C="docker compose -f compose.yml -f compose.prod.yml"
+            for i in 1 2 3 4 5; do
+              if COMPOSE_PARALLEL_LIMIT=1 $C pull --quiet; then break; fi
+              if [ "$i" = 5 ]; then echo "image pull failed after 5 attempts" >&2; exit 1; fi
+              echo "image pull failed (attempt $i), retrying in $((i * 10))s" >&2; sleep $((i * 10))
+            done
+            $C up -d --remove-orphans
+            docker image prune -f'
 
       - name: Health check
         run: curl -fsS --retry 10 --retry-delay 6 --retry-all-errors "https://$DOMAIN/api/health"
